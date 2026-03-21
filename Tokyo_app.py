@@ -64,17 +64,15 @@ except Exception as e:
     st.error("Error de conexión con Google Sheets. Verifica tus secretos (secrets.toml) y permisos.")
     st.stop()
 
-# --- FUNCIONES DE BASE DE DATOS ---
+# --- FUNCIONES DE BASE DE DATOS OPTIMIZADAS ---
 
 def inicializar_sheets():
     existentes = [ws.title for ws in sh.worksheets()]
     for sheet, columns in SHEETS_CONFIG.items():
         if sheet not in existentes:
-            # Crear la hoja y agregar las columnas si no existe
             nuevo_ws = sh.add_worksheet(title=sheet, rows="100", cols=str(len(columns)))
             nuevo_ws.update([columns])
         else:
-            # Lógica de compatibilidad si la hoja ya existe (Ej: Renombrar columna Nombre Completo a Nombre Cliente)
             if sheet == "08_Clientes":
                 ws = sh.worksheet(sheet)
                 headers = ws.row_values(1)
@@ -83,44 +81,77 @@ def inicializar_sheets():
                     headers[idx] = "Nombre Cliente"
                     ws.update(f"A1:G1", [headers])
 
-def leer_datos(sheet_name):
-    try:
-        worksheet = sh.worksheet(sheet_name)
-        data = worksheet.get_all_records()
-        if not data:
-            return pd.DataFrame(columns=SHEETS_CONFIG.get(sheet_name, []))
-        df = pd.DataFrame(data)
-        
-        # Mapeo por retrocompatibilidad de tus datos en Excel
-        if sheet_name == "08_Clientes" and "Nombre Completo" in df.columns:
-            df = df.rename(columns={"Nombre Completo": "Nombre Cliente"})
-            
-        return df
-    except Exception as e:
-        return pd.DataFrame(columns=SHEETS_CONFIG.get(sheet_name, []))
-
-def guardar_datos(df, sheet_name):
-    try:
-        worksheet = sh.worksheet(sheet_name)
-        worksheet.clear()
-        
-        df_clean = df.copy()
-        
-        # Formatear fechas a strings para que GSheets no arroje error de serialización JSON
-        for col in df_clean.columns:
-            if pd.api.types.is_datetime64_any_dtype(df_clean[col]):
-                df_clean[col] = df_clean[col].dt.strftime('%Y-%m-%d')
+def cargar_toda_la_base():
+    """Descarga todas las hojas al iniciar la app y las guarda en memoria RAM para máxima velocidad."""
+    if 'db' not in st.session_state:
+        st.session_state.db = {}
+        for sheet in SHEETS_CONFIG.keys():
+            try:
+                worksheet = sh.worksheet(sheet)
+                data = worksheet.get_all_records()
+                if not data:
+                    df = pd.DataFrame(columns=SHEETS_CONFIG[sheet])
+                else:
+                    df = pd.DataFrame(data)
                 
-        # GSheets no soporta valores NaN (Nulos de pandas), reemplazamos por string vacío
-        df_clean = df_clean.fillna("")
+                # Mapeo de retrocompatibilidad
+                if sheet == "08_Clientes" and "Nombre Completo" in df.columns:
+                    df = df.rename(columns={"Nombre Completo": "Nombre Cliente"})
+                    
+                st.session_state.db[sheet] = df
+            except Exception:
+                st.session_state.db[sheet] = pd.DataFrame(columns=SHEETS_CONFIG[sheet])
+
+def leer_datos(sheet_name):
+    """Lectura instantánea desde la memoria local en lugar de consultar a Google cada vez."""
+    if 'db' in st.session_state and sheet_name in st.session_state.db:
+        return st.session_state.db[sheet_name].copy()
+    return pd.DataFrame(columns=SHEETS_CONFIG.get(sheet_name, []))
+
+def guardar_registro(sheet_name, id_col_name, id_valor, registro_lista):
+    """Escritura quirúrgica: Actualiza solo 1 fila o añade 1 nueva al final, sin afectar el resto."""
+    try:
+        ws = sh.worksheet(sheet_name)
+        headers = ws.row_values(1)
         
-        # Preparar la lista de listas para insertar
-        datos_a_guardar = [df_clean.columns.values.tolist()] + df_clean.values.tolist()
+        # Manejo de retrocompatibilidad para la búsqueda de columna
+        buscar_col_name = "Nombre Completo" if (sheet_name == "08_Clientes" and "Nombre Completo" in headers and id_col_name == "Nombre Cliente") else id_col_name
+            
+        col_idx = headers.index(buscar_col_name) + 1
+        col_vals = ws.col_values(col_idx)
         
-        # Subir todos los datos en una sola llamada a la API
-        worksheet.update(datos_a_guardar)
+        # Formatear datos para la API de Google (Textos limpios)
+        registro_formateado = []
+        for val in registro_lista:
+            if isinstance(val, pd.Timestamp) or isinstance(val, datetime):
+                registro_formateado.append(val.strftime('%Y-%m-%d'))
+            elif pd.isna(val) or val is None:
+                registro_formateado.append("")
+            else:
+                registro_formateado.append(str(val))
+                
+        # 1. Escritura en la Nube (Google Sheets)
+        if id_valor in col_vals:
+            # Si existe, actualizamos solo esa fila
+            row_idx = col_vals.index(id_valor) + 1
+            from gspread.utils import rowcol_to_a1
+            rango_update = f"A{row_idx}:{rowcol_to_a1(row_idx, len(registro_formateado))}"
+            ws.update(range_name=rango_update, values=[registro_formateado])
+        else:
+            # Si es nuevo, lo añadimos al final
+            ws.append_row(registro_formateado)
+            
+        # 2. Escritura Inmediata en Memoria Local (Para que el usuario lo vea al instante)
+        df_actual = st.session_state.db[sheet_name]
+        nuevo_df = pd.DataFrame([registro_lista], columns=SHEETS_CONFIG[sheet_name])
+        
+        if id_valor in df_actual[id_col_name].values:
+            df_actual = df_actual[df_actual[id_col_name] != id_valor]
+            
+        st.session_state.db[sheet_name] = pd.concat([df_actual, nuevo_df], ignore_index=True)
+        
     except Exception as e:
-        st.error(f"Error al guardar datos en {sheet_name}: {e}")
+        st.error(f"Error al guardar registro en {sheet_name}: {e}")
 
 def generar_id_ot():
     df = leer_datos("2_Ordenes de Trabajo")
@@ -180,7 +211,11 @@ def limpiar_telefono(valor):
     return str(valor).replace('.0', '').strip()
 
 # --- INICIALIZACIÓN ---
-inicializar_sheets()
+if 'db_cargada' not in st.session_state:
+    with st.spinner("Conectando y descargando base de datos segura desde la nube..."):
+        inicializar_sheets()
+        cargar_toda_la_base()
+        st.session_state.db_cargada = True
 
 if 'cliente_vehiculo_data' not in st.session_state:
     st.session_state.cliente_vehiculo_data = {
@@ -244,14 +279,13 @@ elif menu_opcion == "Clientes y Vehículos":
             notas_val = st.text_area("Notas Técnicas", value=str(st.session_state.cliente_vehiculo_data['Notas']))
             
             if st.button("Guardar", type="primary", use_container_width=True):
-                new_df_c = df_clientes_base[df_clientes_base['ID Cliente'] != id_cli_display]
-                reg_c = pd.DataFrame([[id_cli_display, fecha_reg.strftime("%Y-%m-%d"), nom_cli, tel_cli, email_cli, dir_cli, tipo_cli]], columns=SHEETS_CONFIG["08_Clientes"])
-                guardar_datos(pd.concat([new_df_c, reg_c]), "08_Clientes")
+                # Guardado optimizado de Cliente
+                registro_c = [id_cli_display, fecha_reg.strftime("%Y-%m-%d"), nom_cli, tel_cli, email_cli, dir_cli, tipo_cli]
+                guardar_registro("08_Clientes", "ID Cliente", id_cli_display, registro_c)
                 
-                df_v_actual = leer_datos("09_Carros por Cliente")
-                new_df_v = df_v_actual[df_v_actual['ID Vehículo'] != id_veh_display]
-                reg_v = pd.DataFrame([[id_veh_display, placa_raw, marca_val, modelo_val, anio_val, color_val, id_cli_display, notas_val, nom_cli, km_val]], columns=SHEETS_CONFIG["09_Carros por Cliente"])
-                guardar_datos(pd.concat([new_df_v, reg_v]), "09_Carros por Cliente")
+                # Guardado optimizado de Vehículo
+                registro_v = [id_veh_display, placa_raw, marca_val, modelo_val, anio_val, color_val, id_cli_display, notas_val, nom_cli, km_val]
+                guardar_registro("09_Carros por Cliente", "ID Vehículo", id_veh_display, registro_v)
                 
                 st.success("Registro actualizado exitosamente.")
                 st.rerun()
@@ -408,9 +442,8 @@ elif menu_opcion == "Ordenes de Trabajo":
                     m_obra, repuestos, costo_base, sub_venta, isv, total_cobro, utilidad
                 ]
                 
-                df_ots_new = df_ots[df_ots["ID Orden"] != id_ot_val]
-                reg_ot = pd.DataFrame([nueva_ot], columns=SHEETS_CONFIG["2_Ordenes de Trabajo"])
-                guardar_datos(pd.concat([df_ots_new, reg_ot]), "2_Ordenes de Trabajo")
+                # Guardado optimizado de Orden de Trabajo
+                guardar_registro("2_Ordenes de Trabajo", "ID Orden", id_ot_val, nueva_ot)
                 
                 st.success("Orden Guardada Correctamente.")
                 st.rerun()
@@ -457,9 +490,9 @@ elif menu_opcion == "Ordenes de Trabajo":
                     subtotal_venta_calc, ganancia_bruta_calc, comentario_serv
                 ]
                 
-                df_detalles_actual = leer_datos("10_Detalles de Ordenes")
-                df_detalles_new = pd.concat([df_detalles_actual, pd.DataFrame([nuevo_detalle], columns=SHEETS_CONFIG["10_Detalles de Ordenes"])])
-                guardar_datos(df_detalles_new, "10_Detalles de Ordenes")
+                # Guardado optimizado de Servicio
+                guardar_registro("10_Detalles de Ordenes", "ID Servicio", id_serv_auto, nuevo_detalle)
+                
                 st.success(f"Servicio {id_serv_auto} agregado a la orden.")
                 st.rerun()
 
@@ -516,7 +549,12 @@ elif menu_opcion == "Clientes":
     st.header("Base Maestra de Clientes")
     st.dataframe(leer_datos("08_Clientes"), use_container_width=True, hide_index=True)
 
-# --- BOTÓN DE RESETEO ---
+# --- BOTÓN DE RESETEO Y SINCRONIZACIÓN ---
+st.sidebar.divider()
+if st.sidebar.button("↻ Sincronizar / Forzar Descarga"):
+    st.session_state.clear()
+    st.rerun()
+
 if st.sidebar.button("Resetear Formularios"):
     for key in ['cliente_vehiculo_data', 'ot_form_data']:
         if key in st.session_state: del st.session_state[key]
