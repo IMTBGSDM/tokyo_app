@@ -236,7 +236,7 @@ if 'ot_form_data' not in st.session_state:
 with st.sidebar:
     st.title("🚗 TOKYO GARAGE")
     st.divider()
-    menu_opcion = st.radio("Navegación", ["Master", "Clientes y Vehículos", "Ordenes de Trabajo", "Cotizaciones", "Nómina", "Empleados", "Kardex", "Finanzas", "Clientes"], index=2)
+    menu_opcion = st.radio("Navegación", ["Master", "Clientes y Vehículos", "Ordenes de Trabajo", "Cotizaciones", "Nómina", "Empleados", "Kardex", "Finanzas", "Clientes"], index=1)
 
 # --- MÓDULOS ---
 
@@ -250,33 +250,107 @@ elif menu_opcion == "Clientes y Vehículos":
     df_vehiculos_base = leer_datos("09_Carros por Cliente")
 
     with col_form:
-        with st.container(height=750, border=False):
+        with st.container(height=800, border=False):
             st.subheader("Datos del Cliente")
-            nom_cli = st.text_input(":red[*] Nombre Cliente", value=str(st.session_state.cliente_vehiculo_data['Nombre Cliente']))
             c_row_header_1, c_row_header_2 = st.columns(2)
-            tipo_cli = c_row_header_1.selectbox(":red[*] Tipo", ["Frecuente", "Nuevo", "Flota"], index=["Frecuente", "Nuevo", "Flota"].index(st.session_state.cliente_vehiculo_data['Tipo']))
-            id_cli_display = st.session_state.cliente_vehiculo_data['ID Cliente'] or generar_id("CLI", "08_Clientes", 4)
+            
+            # --- LOGICA DINAMICA DE CLIENTE ---
+            tipo_cli_opciones = ["Frecuente", "Nuevo", "Flota"]
+            curr_tipo = st.session_state.cliente_vehiculo_data.get('Tipo', 'Nuevo')
+            tipo_cli = c_row_header_1.selectbox(":red[*] Tipo", tipo_cli_opciones, index=tipo_cli_opciones.index(curr_tipo) if curr_tipo in tipo_cli_opciones else 1)
+            
+            # Variables de autocompletado por defecto
+            def_tel = limpiar_telefono(st.session_state.cliente_vehiculo_data.get('Teléfono', ''))
+            def_fecha = st.session_state.cliente_vehiculo_data.get('Fecha', datetime.now())
+            def_email = str(st.session_state.cliente_vehiculo_data.get('Correo', ''))
+            def_dir = str(st.session_state.cliente_vehiculo_data.get('Dirección', ''))
+            
+            if tipo_cli == "Frecuente":
+                noms_existentes = [""] + sorted(df_clientes_base["Nombre Cliente"].dropna().unique().tolist())
+                curr_nom = st.session_state.cliente_vehiculo_data.get('Nombre Cliente', '')
+                nom_cli = st.selectbox(":red[*] Nombre Cliente", options=noms_existentes, index=noms_existentes.index(curr_nom) if curr_nom in noms_existentes else 0)
+                
+                if nom_cli:
+                    match_c = df_clientes_base[df_clientes_base["Nombre Cliente"] == nom_cli]
+                    if not match_c.empty:
+                        id_cli_display = match_c.iloc[0]["ID Cliente"]
+                        def_tel = limpiar_telefono(match_c.iloc[0]["Teléfono / WhatsApp"])
+                        def_email = str(match_c.iloc[0]["Correo Electrónico"])
+                        def_dir = str(match_c.iloc[0]["Dirección"])
+                        try: def_fecha = pd.to_datetime(match_c.iloc[0]["Fecha"]).date()
+                        except: pass
+                    else:
+                        id_cli_display = st.session_state.cliente_vehiculo_data['ID Cliente'] or generar_id("CLI", "08_Clientes", 4)
+                else:
+                    id_cli_display = st.session_state.cliente_vehiculo_data['ID Cliente'] or generar_id("CLI", "08_Clientes", 4)
+            else:
+                nom_cli = st.text_input(":red[*] Nombre Cliente", value=str(st.session_state.cliente_vehiculo_data.get('Nombre Cliente', '')))
+                id_cli_display = st.session_state.cliente_vehiculo_data['ID Cliente'] if (st.session_state.cliente_vehiculo_data['ID Cliente'] and curr_tipo != 'Frecuente') else generar_id("CLI", "08_Clientes", 4)
+            
             c_row_header_2.text_input(":red[*] Código de Cliente", value=id_cli_display, disabled=True)
+            
             c_row1_1, c_row1_2 = st.columns(2)
-            tel_cli = c_row1_1.text_input(":red[*] Teléfono (8+ dígitos)", value=limpiar_telefono(st.session_state.cliente_vehiculo_data['Teléfono']))
-            fecha_reg = c_row1_2.date_input(":red[*] Fecha de Registro", value=st.session_state.cliente_vehiculo_data['Fecha'], format="DD/MM/YYYY")
-            email_cli = st.text_input("e-mail", value=str(st.session_state.cliente_vehiculo_data['Correo']))
-            dir_cli = st.text_input("Dirección", value=str(st.session_state.cliente_vehiculo_data['Dirección']))
+            tel_cli = c_row1_1.text_input(":red[*] Teléfono (8+ dígitos)", value=def_tel)
+            fecha_reg = c_row1_2.date_input(":red[*] Fecha de Registro", value=def_fecha, format="DD/MM/YYYY")
+            email_cli = st.text_input("e-mail", value=def_email)
+            dir_cli = st.text_input("Dirección", value=def_dir)
             
             st.divider()
             st.subheader("Datos del Vehículo")
-            id_veh_display = st.session_state.cliente_vehiculo_data['ID Vehículo'] or generar_id("VEH", "09_Carros por Cliente", 5)
-            st.text_input(":red[*] ID Vehículo", value=id_veh_display, disabled=True)
+            
+            v_header_1, v_header_2 = st.columns(2)
+            if tipo_cli == "Frecuente":
+                tipo_veh = v_header_1.radio("Estado del Vehículo", ["Registrado", "Nuevo"], horizontal=True)
+            else:
+                tipo_veh = "Nuevo"
+                v_header_1.write("") # Mantiene la cuadrícula alineada
+                
+            # Variables de autocompletado vehículo
+            def_km = int(st.session_state.cliente_vehiculo_data.get('Kilometraje', 0))
+            def_marca = str(st.session_state.cliente_vehiculo_data.get('Marca', ''))
+            def_modelo = str(st.session_state.cliente_vehiculo_data.get('Modelo', ''))
+            def_anio = int(st.session_state.cliente_vehiculo_data.get('Año', 2024))
+            def_color = str(st.session_state.cliente_vehiculo_data.get('Color', ''))
+            def_notas = str(st.session_state.cliente_vehiculo_data.get('Notas', ''))
+            
             v_row1_1, v_row1_2 = st.columns(2)
-            placa_raw = v_row1_1.text_input(":red[*] Placa", value=str(st.session_state.cliente_vehiculo_data['Placa'])).upper()
-            km_val = v_row1_2.number_input("Kilometraje Inicial", value=int(st.session_state.cliente_vehiculo_data['Kilometraje']), step=1000)
+            
+            if tipo_veh == "Registrado" and nom_cli:
+                df_veh_filtrado = df_vehiculos_base[df_vehiculos_base["ID Cliente"] == id_cli_display]
+                placas_existentes = [""] + df_veh_filtrado["Placa"].dropna().unique().tolist()
+                curr_placa = st.session_state.cliente_vehiculo_data.get('Placa', '')
+                placa_raw = v_row1_1.selectbox(":red[*] Placa", options=placas_existentes, index=placas_existentes.index(curr_placa) if curr_placa in placas_existentes else 0)
+                
+                if placa_raw:
+                    match_v = df_veh_filtrado[df_veh_filtrado["Placa"] == placa_raw]
+                    if not match_v.empty:
+                        id_veh_display = match_v.iloc[0]["ID Vehículo"]
+                        try: def_km = int(match_v.iloc[0].get("Kilometraje", 0) or 0)
+                        except: pass
+                        def_marca = str(match_v.iloc[0].get("Marca", ""))
+                        def_modelo = str(match_v.iloc[0].get("Modelo", ""))
+                        try: def_anio = int(match_v.iloc[0].get("Año", 2024) or 2024)
+                        except: pass
+                        def_color = str(match_v.iloc[0].get("Color", ""))
+                        def_notas = str(match_v.iloc[0].get("Notas Técnicas (Detalles)", ""))
+                    else:
+                        id_veh_display = st.session_state.cliente_vehiculo_data['ID Vehículo'] or generar_id("VEH", "09_Carros por Cliente", 5)
+                else:
+                    id_veh_display = st.session_state.cliente_vehiculo_data['ID Vehículo'] or generar_id("VEH", "09_Carros por Cliente", 5)
+            else:
+                placa_raw = v_row1_1.text_input(":red[*] Placa", value=str(st.session_state.cliente_vehiculo_data.get('Placa', ''))).upper()
+                id_veh_display = st.session_state.cliente_vehiculo_data['ID Vehículo'] if (st.session_state.cliente_vehiculo_data['ID Vehículo'] and tipo_veh == 'Nuevo') else generar_id("VEH", "09_Carros por Cliente", 5)
+            
+            v_header_2.text_input(":red[*] ID Vehículo", value=id_veh_display, disabled=True)
+            
+            km_val = v_row1_2.number_input("Kilometraje Inicial", value=def_km, step=1000)
             v_row2_1, v_row2_2 = st.columns(2)
-            marca_val = v_row2_1.text_input(":red[*] Marca", value=str(st.session_state.cliente_vehiculo_data['Marca']))
-            modelo_val = v_row2_2.text_input(":red[*] Modelo", value=str(st.session_state.cliente_vehiculo_data['Modelo']))
+            marca_val = v_row2_1.text_input(":red[*] Marca", value=def_marca)
+            modelo_val = v_row2_2.text_input(":red[*] Modelo", value=def_modelo)
             v_row3_1, v_row3_2 = st.columns(2)
-            anio_val = v_row3_1.number_input(":red[*] Año", min_value=1950, max_value=2030, value=int(st.session_state.cliente_vehiculo_data['Año']))
-            color_val = v_row3_2.text_input(":red[*] Color", value=str(st.session_state.cliente_vehiculo_data['Color']))
-            notas_val = st.text_area("Notas Técnicas", value=str(st.session_state.cliente_vehiculo_data['Notas']))
+            anio_val = v_row3_1.number_input(":red[*] Año", min_value=1950, max_value=2030, value=def_anio)
+            color_val = v_row3_2.text_input(":red[*] Color", value=def_color)
+            notas_val = st.text_area("Notas Técnicas", value=def_notas)
             
             if st.button("Guardar", type="primary", use_container_width=True):
                 # Guardado optimizado de Cliente
@@ -287,6 +361,11 @@ elif menu_opcion == "Clientes y Vehículos":
                 registro_v = [id_veh_display, placa_raw, marca_val, modelo_val, anio_val, color_val, id_cli_display, notas_val, nom_cli, km_val]
                 guardar_registro("09_Carros por Cliente", "ID Vehículo", id_veh_display, registro_v)
                 
+                # Actualizar memoria visual
+                st.session_state.cliente_vehiculo_data.update({
+                    'ID Cliente': id_cli_display, 'Nombre Cliente': nom_cli, 'Tipo': tipo_cli,
+                    'ID Vehículo': id_veh_display, 'Placa': placa_raw
+                })
                 st.success("Registro actualizado exitosamente.")
                 st.rerun()
 
@@ -294,21 +373,24 @@ elif menu_opcion == "Clientes y Vehículos":
         st.write("### Vehículos por Cliente")
         df_view = df_vehiculos_base.copy()
         selected_row = st.dataframe(df_view, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+        
+        # Parche de seguridad para el límite de índices (Evita el crasheo "enlace permanente")
         if selected_row and len(selected_row.selection.rows) > 0:
             idx = selected_row.selection.rows[0]
-            data_veh = df_view.iloc[idx]
-            data_cli = df_clientes_base[df_clientes_base['ID Cliente'] == data_veh['ID Cliente']]
-            if not data_cli.empty:
-                c = data_cli.iloc[0]
-                st.session_state.cliente_vehiculo_data = {
-                    'ID Cliente': c['ID Cliente'], 'Nombre Cliente': c['Nombre Cliente'], 
-                    'Teléfono': c['Teléfono / WhatsApp'], 'Fecha': pd.to_datetime(c['Fecha']),
-                    'Correo': c['Correo Electrónico'], 'Dirección': c['Dirección'], 'Tipo': c['Tipo (Frecuente/Nuevo)'],
-                    'ID Vehículo': data_veh['ID Vehículo'], 'Placa': data_veh['Placa'],
-                    'Marca': data_veh['Marca'], 'Modelo': data_veh['Modelo'], 'Año': data_veh['Año'], 
-                    'Color': data_veh['Color'], 'Kilometraje': data_veh['Kilometraje'], 'Notas': data_veh['Notas Técnicas (Detalles)']
-                }
-                st.rerun()
+            if idx < len(df_view):
+                data_veh = df_view.iloc[idx]
+                data_cli = df_clientes_base[df_clientes_base['ID Cliente'] == data_veh['ID Cliente']]
+                if not data_cli.empty:
+                    c = data_cli.iloc[0]
+                    st.session_state.cliente_vehiculo_data = {
+                        'ID Cliente': c['ID Cliente'], 'Nombre Cliente': c['Nombre Cliente'], 
+                        'Teléfono': c['Teléfono / WhatsApp'], 'Fecha': pd.to_datetime(c['Fecha']),
+                        'Correo': c['Correo Electrónico'], 'Dirección': c['Dirección'], 'Tipo': c['Tipo (Frecuente/Nuevo)'],
+                        'ID Vehículo': data_veh['ID Vehículo'], 'Placa': data_veh['Placa'],
+                        'Marca': data_veh['Marca'], 'Modelo': data_veh['Modelo'], 'Año': data_veh['Año'], 
+                        'Color': data_veh['Color'], 'Kilometraje': data_veh['Kilometraje'], 'Notas': data_veh['Notas Técnicas (Detalles)']
+                    }
+                    st.rerun()
 
 elif menu_opcion == "Ordenes de Trabajo":
     col_form, col_space, col_table = st.columns([2.2, 0.1, 3.2])
@@ -501,23 +583,26 @@ elif menu_opcion == "Ordenes de Trabajo":
             st.write("### Ordenes de Trabajo")
             sel_ot = st.dataframe(df_ots, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
             
+            # Parche de seguridad para el límite de índices
             if sel_ot and len(sel_ot.selection.rows) > 0:
-                data = df_ots.iloc[sel_ot.selection.rows[0]]
-                st.session_state.ot_form_data = {
-                    'ID Orden': str(data['ID Orden']),
-                    'Fecha Creacion': pd.to_datetime(data['Fecha Creacion']),
-                    'Fecha Cierre Tecnico': pd.to_datetime(data['Fecha Cierre Tecnico']) if not pd.isna(data['Fecha Cierre Tecnico']) and data['Fecha Cierre Tecnico'] != "" else None,
-                    'Fecha Cierra Admin': pd.to_datetime(data['Fecha Cierra Admin']) if not pd.isna(data['Fecha Cierra Admin']) and data['Fecha Cierra Admin'] != "" else None,
-                    'ID Cliente': data['ID Cliente'], 'Nombre Cliente': data['Nombre Cliente'],
-                    'Placa': data['Placa'] if not pd.isna(data['Placa']) else "",
-                    'Kilometraje': data['Kilometraje'] if not pd.isna(data['Kilometraje']) else 0,
-                    'Estado Tecnico': str(data['Estado Tecnico']) if not pd.isna(data['Estado Tecnico']) else "",
-                    'Estado Admin': str(data['Estado Admin']) if not pd.isna(data['Estado Admin']) else "",
-                    'Tipo Ingreso': data['Tipo Ingreso'], 'Forma de Pago': data['Forma de Pago'],
-                    'Total Mano de Obra': float(data['Total Mano de Obra']), 'Total Repuestos': float(data['Total Repuestos']),
-                    'is_edit': True
-                }
-                st.rerun()
+                idx = sel_ot.selection.rows[0]
+                if idx < len(df_ots):
+                    data = df_ots.iloc[idx]
+                    st.session_state.ot_form_data = {
+                        'ID Orden': str(data['ID Orden']),
+                        'Fecha Creacion': pd.to_datetime(data['Fecha Creacion']),
+                        'Fecha Cierre Tecnico': pd.to_datetime(data['Fecha Cierre Tecnico']) if not pd.isna(data['Fecha Cierre Tecnico']) and data['Fecha Cierre Tecnico'] != "" else None,
+                        'Fecha Cierra Admin': pd.to_datetime(data['Fecha Cierra Admin']) if not pd.isna(data['Fecha Cierra Admin']) and data['Fecha Cierra Admin'] != "" else None,
+                        'ID Cliente': data['ID Cliente'], 'Nombre Cliente': data['Nombre Cliente'],
+                        'Placa': data['Placa'] if not pd.isna(data['Placa']) else "",
+                        'Kilometraje': data['Kilometraje'] if not pd.isna(data['Kilometraje']) else 0,
+                        'Estado Tecnico': str(data['Estado Tecnico']) if not pd.isna(data['Estado Tecnico']) else "",
+                        'Estado Admin': str(data['Estado Admin']) if not pd.isna(data['Estado Admin']) else "",
+                        'Tipo Ingreso': data['Tipo Ingreso'], 'Forma de Pago': data['Forma de Pago'],
+                        'Total Mano de Obra': float(data['Total Mano de Obra']), 'Total Repuestos': float(data['Total Repuestos']),
+                        'is_edit': True
+                    }
+                    st.rerun()
 
             st.divider()
             st.write("### Detalle de Ordenes de Trabajo")
