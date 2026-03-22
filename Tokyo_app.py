@@ -48,7 +48,6 @@ st.markdown("""
 
 @st.cache_resource
 def get_gspread_client():
-    # Cargar credenciales desde st.secrets
     cred_dict = dict(st.secrets["gcp_service_account"])
     scopes = [
         'https://www.googleapis.com/auth/spreadsheets',
@@ -82,7 +81,6 @@ def inicializar_sheets():
                     ws.update(f"A1:G1", [headers])
 
 def cargar_toda_la_base():
-    """Descarga todas las hojas al iniciar la app y las guarda en memoria RAM para máxima velocidad."""
     if 'db' not in st.session_state:
         st.session_state.db = {}
         for sheet in SHEETS_CONFIG.keys():
@@ -94,7 +92,6 @@ def cargar_toda_la_base():
                 else:
                     df = pd.DataFrame(data)
                 
-                # Mapeo de retrocompatibilidad
                 if sheet == "08_Clientes" and "Nombre Completo" in df.columns:
                     df = df.rename(columns={"Nombre Completo": "Nombre Cliente"})
                     
@@ -103,24 +100,20 @@ def cargar_toda_la_base():
                 st.session_state.db[sheet] = pd.DataFrame(columns=SHEETS_CONFIG[sheet])
 
 def leer_datos(sheet_name):
-    """Lectura instantánea desde la memoria local en lugar de consultar a Google cada vez."""
     if 'db' in st.session_state and sheet_name in st.session_state.db:
         return st.session_state.db[sheet_name].copy()
     return pd.DataFrame(columns=SHEETS_CONFIG.get(sheet_name, []))
 
 def guardar_registro(sheet_name, id_col_name, id_valor, registro_lista):
-    """Escritura quirúrgica: Actualiza solo 1 fila o añade 1 nueva al final, sin afectar el resto."""
     try:
         ws = sh.worksheet(sheet_name)
         headers = ws.row_values(1)
         
-        # Manejo de retrocompatibilidad para la búsqueda de columna
         buscar_col_name = "Nombre Completo" if (sheet_name == "08_Clientes" and "Nombre Completo" in headers and id_col_name == "Nombre Cliente") else id_col_name
             
         col_idx = headers.index(buscar_col_name) + 1
         col_vals = ws.col_values(col_idx)
         
-        # Formatear datos para la API de Google (Textos limpios)
         registro_formateado = []
         for val in registro_lista:
             if isinstance(val, pd.Timestamp) or isinstance(val, datetime):
@@ -130,18 +123,14 @@ def guardar_registro(sheet_name, id_col_name, id_valor, registro_lista):
             else:
                 registro_formateado.append(str(val))
                 
-        # 1. Escritura en la Nube (Google Sheets)
         if id_valor in col_vals:
-            # Si existe, actualizamos solo esa fila
             row_idx = col_vals.index(id_valor) + 1
             from gspread.utils import rowcol_to_a1
             rango_update = f"A{row_idx}:{rowcol_to_a1(row_idx, len(registro_formateado))}"
             ws.update(range_name=rango_update, values=[registro_formateado])
         else:
-            # Si es nuevo, lo añadimos al final
             ws.append_row(registro_formateado)
             
-        # 2. Escritura Inmediata en Memoria Local (Para que el usuario lo vea al instante)
         df_actual = st.session_state.db[sheet_name]
         nuevo_df = pd.DataFrame([registro_lista], columns=SHEETS_CONFIG[sheet_name])
         
@@ -181,8 +170,6 @@ def generar_id(prefijo, sheet_name, digitos=2):
 
 def generar_id_servicio(id_orden):
     df_detalles = leer_datos("10_Detalles de Ordenes")
-    
-    # Extraer el YY-XXXX del ID de Orden (ej. OT-26-0004 -> 26-0004)
     if id_orden and id_orden.count('-') >= 2:
         partes = id_orden.split('-')
         yy_xxxx = f"{partes[1]}-{partes[2]}"
@@ -191,19 +178,14 @@ def generar_id_servicio(id_orden):
         
     prefijo = f"SER-{yy_xxxx}"
     
-    if df_detalles.empty:
-        return f"{prefijo}-01"
-    
+    if df_detalles.empty: return f"{prefijo}-01"
     df_actual = df_detalles[df_detalles["ID Orden"] == id_orden]
-    if df_actual.empty:
-        return f"{prefijo}-01"
-    
+    if df_actual.empty: return f"{prefijo}-01"
     try:
         ultimos_nums = df_actual["ID Servicio"].str.split('-').str[-1].astype(int)
         nuevo_num = ultimos_nums.max() + 1
     except:
         nuevo_num = 1
-        
     return f"{prefijo}-{nuevo_num:02d}"
 
 def limpiar_telefono(valor):
@@ -221,7 +203,8 @@ if 'cliente_vehiculo_data' not in st.session_state:
     st.session_state.cliente_vehiculo_data = {
         'ID Cliente': '', 'Nombre Cliente': '', 'Teléfono': '', 'Fecha': datetime.now(),
         'Correo': '', 'Dirección': '', 'Tipo': 'Nuevo', 'ID Vehículo': '', 'Placa': '',
-        'Marca': '', 'Modelo': '', 'Año': 2024, 'Color': '', 'Kilometraje': 0, 'Notas': ''
+        'Marca': '', 'Modelo': '', 'Año': 2024, 'Color': '', 'Kilometraje': 0, 'Notas': '',
+        'Estado Vehículo': 'Nuevo'
     }
 
 if 'ot_form_data' not in st.session_state:
@@ -236,7 +219,8 @@ if 'ot_form_data' not in st.session_state:
 with st.sidebar:
     st.title("🚗 TOKYO GARAGE")
     st.divider()
-    menu_opcion = st.radio("Navegación", ["Master", "Clientes y Vehículos", "Ordenes de Trabajo", "Cotizaciones", "Nómina", "Empleados", "Kardex", "Finanzas", "Clientes"], index=1)
+    # Eliminada la opción "Clientes" del menú final
+    menu_opcion = st.radio("Navegación", ["Master", "Clientes y Vehículos", "Ordenes de Trabajo", "Cotizaciones", "Nómina", "Empleados", "Kardex", "Finanzas"], index=1)
 
 # --- MÓDULOS ---
 
@@ -259,7 +243,9 @@ elif menu_opcion == "Clientes y Vehículos":
             curr_tipo = st.session_state.cliente_vehiculo_data.get('Tipo', 'Nuevo')
             tipo_cli = c_row_header_1.selectbox(":red[*] Tipo", tipo_cli_opciones, index=tipo_cli_opciones.index(curr_tipo) if curr_tipo in tipo_cli_opciones else 1)
             
-            # Variables de autocompletado por defecto
+            # Actualizamos el estado para la lógica de los botones
+            st.session_state.cliente_vehiculo_data['Tipo'] = tipo_cli
+            
             def_tel = limpiar_telefono(st.session_state.cliente_vehiculo_data.get('Teléfono', ''))
             def_fecha = st.session_state.cliente_vehiculo_data.get('Fecha', datetime.now())
             def_email = str(st.session_state.cliente_vehiculo_data.get('Correo', ''))
@@ -299,13 +285,18 @@ elif menu_opcion == "Clientes y Vehículos":
             st.subheader("Datos del Vehículo")
             
             v_header_1, v_header_2 = st.columns(2)
+            curr_estado_veh = st.session_state.cliente_vehiculo_data.get('Estado Vehículo', 'Nuevo')
+            
             if tipo_cli == "Frecuente":
-                tipo_veh = v_header_1.radio("Estado del Vehículo", ["Registrado", "Nuevo"], horizontal=True)
+                tipo_veh = v_header_1.radio("Estado del Vehículo", ["Registrado", "Nuevo"], 
+                                          index=0 if curr_estado_veh == "Registrado" else 1, horizontal=True)
             else:
                 tipo_veh = "Nuevo"
-                v_header_1.write("") # Mantiene la cuadrícula alineada
+                v_header_1.write("")
+            
+            # Actualizamos en el session state por si cambió manualmente
+            st.session_state.cliente_vehiculo_data['Estado Vehículo'] = tipo_veh
                 
-            # Variables de autocompletado vehículo
             def_km = int(st.session_state.cliente_vehiculo_data.get('Kilometraje', 0))
             def_marca = str(st.session_state.cliente_vehiculo_data.get('Marca', ''))
             def_modelo = str(st.session_state.cliente_vehiculo_data.get('Modelo', ''))
@@ -347,50 +338,81 @@ elif menu_opcion == "Clientes y Vehículos":
             v_row2_1, v_row2_2 = st.columns(2)
             marca_val = v_row2_1.text_input(":red[*] Marca", value=def_marca)
             modelo_val = v_row2_2.text_input(":red[*] Modelo", value=def_modelo)
+            
             v_row3_1, v_row3_2 = st.columns(2)
             anio_val = v_row3_1.number_input(":red[*] Año", min_value=1950, max_value=2030, value=def_anio)
             color_val = v_row3_2.text_input(":red[*] Color", value=def_color)
-            notas_val = st.text_area("Notas Técnicas", value=def_notas)
             
-            if st.button("Guardar", type="primary", use_container_width=True):
-                # Guardado optimizado de Cliente
+            # Campo extraído y garantizado de ser visible sobre el botón
+            notas_val = st.text_area("Notas Técnicas", value=def_notas, height=100)
+            
+            # --- VALIDACIÓN DE BOTÓN Y ETIQUETA ---
+            campos_obligatorios = [id_cli_display, fecha_reg, nom_cli, tel_cli, tipo_cli, id_veh_display, placa_raw, marca_val, modelo_val, anio_val, color_val]
+            # Desactivar si algún campo obligatorio está vacío/blanco
+            btn_disabled = any(not str(campo).strip() for campo in campos_obligatorios)
+            
+            if tipo_cli in ["Nuevo", "Flota"]:
+                lbl_boton = "Ingresar Cliente y Vehículo"
+            elif tipo_cli == "Frecuente" and tipo_veh == "Nuevo":
+                lbl_boton = "Ingresar Vehículo y Actualizar Cliente"
+            else: # Frecuente y Registrado
+                lbl_boton = "Actualizar Cliente y Vehículo"
+            
+            st.write("") # Espaciador ligero
+            if st.button(lbl_boton, type="primary", use_container_width=True, disabled=btn_disabled):
                 registro_c = [id_cli_display, fecha_reg.strftime("%Y-%m-%d"), nom_cli, tel_cli, email_cli, dir_cli, tipo_cli]
                 guardar_registro("08_Clientes", "ID Cliente", id_cli_display, registro_c)
                 
-                # Guardado optimizado de Vehículo
                 registro_v = [id_veh_display, placa_raw, marca_val, modelo_val, anio_val, color_val, id_cli_display, notas_val, nom_cli, km_val]
                 guardar_registro("09_Carros por Cliente", "ID Vehículo", id_veh_display, registro_v)
                 
-                # Actualizar memoria visual
                 st.session_state.cliente_vehiculo_data.update({
                     'ID Cliente': id_cli_display, 'Nombre Cliente': nom_cli, 'Tipo': tipo_cli,
-                    'ID Vehículo': id_veh_display, 'Placa': placa_raw
+                    'ID Vehículo': id_veh_display, 'Placa': placa_raw, 'Estado Vehículo': tipo_veh
                 })
-                st.success("Registro actualizado exitosamente.")
+                st.success(f"Acción '{lbl_boton}' ejecutada exitosamente.")
+                
+                if 'last_selected_vehiculo_idx' in st.session_state:
+                    del st.session_state['last_selected_vehiculo_idx']
                 st.rerun()
 
     with col_table:
+        # La tabla 08_Clientes ahora vive arriba y es solo lectura
+        st.write("### Clientes")
+        st.dataframe(df_clientes_base, use_container_width=True, hide_index=True)
+        
+        st.divider()
         st.write("### Vehículos por Cliente")
         df_view = df_vehiculos_base.copy()
         selected_row = st.dataframe(df_view, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
         
-        # Parche de seguridad para el límite de índices (Evita el crasheo "enlace permanente")
+        # Parche de seguridad para el límite de índices y bloqueo de loop infinito
         if selected_row and len(selected_row.selection.rows) > 0:
             idx = selected_row.selection.rows[0]
             if idx < len(df_view):
-                data_veh = df_view.iloc[idx]
-                data_cli = df_clientes_base[df_clientes_base['ID Cliente'] == data_veh['ID Cliente']]
-                if not data_cli.empty:
-                    c = data_cli.iloc[0]
-                    st.session_state.cliente_vehiculo_data = {
-                        'ID Cliente': c['ID Cliente'], 'Nombre Cliente': c['Nombre Cliente'], 
-                        'Teléfono': c['Teléfono / WhatsApp'], 'Fecha': pd.to_datetime(c['Fecha']),
-                        'Correo': c['Correo Electrónico'], 'Dirección': c['Dirección'], 'Tipo': c['Tipo (Frecuente/Nuevo)'],
-                        'ID Vehículo': data_veh['ID Vehículo'], 'Placa': data_veh['Placa'],
-                        'Marca': data_veh['Marca'], 'Modelo': data_veh['Modelo'], 'Año': data_veh['Año'], 
-                        'Color': data_veh['Color'], 'Kilometraje': data_veh['Kilometraje'], 'Notas': data_veh['Notas Técnicas (Detalles)']
-                    }
-                    st.rerun()
+                # Verificamos si este índice NO fue el último seleccionado para evitar el loop
+                if st.session_state.get('last_selected_vehiculo_idx') != idx:
+                    data_veh = df_view.iloc[idx]
+                    data_cli = df_clientes_base[df_clientes_base['ID Cliente'] == data_veh['ID Cliente']]
+                    if not data_cli.empty:
+                        c = data_cli.iloc[0]
+                        st.session_state.cliente_vehiculo_data = {
+                            'ID Cliente': c['ID Cliente'], 'Nombre Cliente': c['Nombre Cliente'], 
+                            'Teléfono': c['Teléfono / WhatsApp'], 'Fecha': pd.to_datetime(c['Fecha']),
+                            'Correo': c['Correo Electrónico'], 'Dirección': c['Dirección'], 
+                            'Tipo': 'Frecuente', # Forzado a frecuente por selección
+                            'ID Vehículo': data_veh['ID Vehículo'], 'Placa': data_veh['Placa'],
+                            'Marca': data_veh['Marca'], 'Modelo': data_veh['Modelo'], 'Año': data_veh['Año'], 
+                            'Color': data_veh['Color'], 'Kilometraje': data_veh['Kilometraje'], 
+                            'Notas': data_veh['Notas Técnicas (Detalles)'],
+                            'Estado Vehículo': 'Registrado' # Forzado a registrado por selección
+                        }
+                        st.session_state.last_selected_vehiculo_idx = idx
+                        st.rerun()
+        else:
+            # Si se desmarca la selección, liberamos el "candado"
+            if 'last_selected_vehiculo_idx' in st.session_state:
+                del st.session_state['last_selected_vehiculo_idx']
 
 elif menu_opcion == "Ordenes de Trabajo":
     col_form, col_space, col_table = st.columns([2.2, 0.1, 3.2])
@@ -404,13 +426,11 @@ elif menu_opcion == "Ordenes de Trabajo":
         with st.container(height=850, border=False):
             st.subheader("Gestión de Orden de Trabajo")
             
-            # --- SECCIÓN 1: Identificación ---
             ot_row1_1, ot_row1_2 = st.columns(2)
             f_crea = ot_row1_1.date_input(":red[*] Fecha Creacion", value=st.session_state.ot_form_data['Fecha Creacion'], disabled=st.session_state.ot_form_data['is_edit'], format="DD/MM/YYYY")
             id_ot_val = st.session_state.ot_form_data['ID Orden'] if st.session_state.ot_form_data['ID Orden'] else generar_id_ot()
             ot_row1_2.text_input(":red[*] ID Orden", value=id_ot_val, disabled=True)
             
-            # --- SECCIÓN 2: Cliente (Intercambiado y Mejorado) ---
             noms_cli_list = [""] + df_clientes["Nombre Cliente"].dropna().unique().tolist()
             curr_nom = st.session_state.ot_form_data['Nombre Cliente'] or ""
             curr_id = st.session_state.ot_form_data['ID Cliente'] or ""
@@ -419,13 +439,11 @@ elif menu_opcion == "Ordenes de Trabajo":
             
             def sync_nombre_a_id():
                 if st.session_state.sel_nom_cli_ot:
-                    # Buscar el ID basado en el nombre en la hoja 08_Clientes
                     match = df_clientes[df_clientes["Nombre Cliente"] == st.session_state.sel_nom_cli_ot]
                     if not match.empty:
                         new_id = match.iloc[0]["ID Cliente"]
                         st.session_state.ot_form_data['ID Cliente'] = new_id
                         st.session_state.ot_form_data['Nombre Cliente'] = st.session_state.sel_nom_cli_ot
-                        # Limpiar placa y KM al cambiar de cliente
                         st.session_state.ot_form_data['Placa'] = ""
                         st.session_state.ot_form_data['Kilometraje'] = 0
                 else:
@@ -434,21 +452,16 @@ elif menu_opcion == "Ordenes de Trabajo":
                     st.session_state.ot_form_data['Placa'] = ""
                     st.session_state.ot_form_data['Kilometraje'] = 0
 
-            # Nombre es el selector (ahora primero)
             nom_cli_ot = col_cli_1.selectbox(":red[*] Nombre Cliente", options=noms_cli_list, 
                                            index=noms_cli_list.index(curr_nom) if curr_nom in noms_cli_list else 0,
                                            key="sel_nom_cli_ot", on_change=sync_nombre_a_id, disabled=st.session_state.ot_form_data['is_edit'])
             
-            # ID es bloqueado (ahora segundo)
             col_cli_2.text_input(":red[*] ID Cliente", value=st.session_state.ot_form_data['ID Cliente'], disabled=True)
 
-            # --- SECCIÓN 3: Vehículo (Placa y KM dinámicos) ---
             col_placa, col_km = st.columns(2)
             
-            # Filtrar placas del cliente seleccionado desde 09_Carros por Cliente
             if st.session_state.ot_form_data['ID Cliente']:
                 df_veh_cli = df_vehiculos[df_vehiculos["ID Cliente"] == st.session_state.ot_form_data['ID Cliente']]
-                # Asegurar que existan las columnas necesarias para evitar KeyError
                 if "Placa" in df_veh_cli.columns:
                     placas_list = [""] + df_veh_cli["Placa"].dropna().tolist()
                 else:
@@ -462,7 +475,6 @@ elif menu_opcion == "Ordenes de Trabajo":
             
             def sync_placa_a_km():
                 if st.session_state.sel_placa_ot_act:
-                    # Buscar KM en la tabla de vehículos
                     match_v = df_vehiculos[(df_vehiculos["ID Cliente"] == st.session_state.ot_form_data['ID Cliente']) & 
                                           (df_vehiculos["Placa"] == st.session_state.sel_placa_ot_act)]
                     if not match_v.empty:
@@ -478,12 +490,10 @@ elif menu_opcion == "Ordenes de Trabajo":
                                               key="sel_placa_ot_act", on_change=sync_placa_a_km, 
                                               disabled=placa_disabled)
             
-            # KM bloqueado hasta que haya placa
             km_disabled = True if not st.session_state.ot_form_data['Placa'] else False
             km_ot_val = col_km.number_input("Kilometraje Actual", value=int(st.session_state.ot_form_data['Kilometraje']), 
                                           disabled=km_disabled)
 
-            # --- SECCIÓN 4: Estados y Fechas Cierre ---
             ot_row_est1, ot_row_est2 = st.columns(2)
             est_tec = ot_row_est1.text_input("Estado Tecnico", value=st.session_state.ot_form_data['Estado Tecnico'])
             est_adm = ot_row_est2.text_input("Estado Admin", value=st.session_state.ot_form_data['Estado Admin'])
@@ -492,14 +502,12 @@ elif menu_opcion == "Ordenes de Trabajo":
             f_tec = ot_row_f1.date_input("Fecha Cierre Tecnico", value=st.session_state.ot_form_data['Fecha Cierre Tecnico'], format="DD/MM/YYYY")
             f_adm = ot_row_f2.date_input("Fecha Cierra Admin", value=st.session_state.ot_form_data['Fecha Cierra Admin'], format="DD/MM/YYYY")
 
-            # --- SECCIÓN 5: Financiero ---
             ot_row_fin1, ot_row_fin2 = st.columns(2)
             t_ingreso = ot_row_fin1.selectbox("Tipo Ingreso", ["Con Factura", "Sin Factura"], index=["Con Factura", "Sin Factura"].index(st.session_state.ot_form_data['Tipo Ingreso']))
             f_pago = ot_row_fin2.selectbox("Forma de Pago", ["Efectivo", "Tarjeta", "Por definir"], index=["Efectivo", "Tarjeta", "Por definir"].index(st.session_state.ot_form_data['Forma de Pago']))
             
             ot_row_val1, ot_row_val2 = st.columns(2)
             
-            # Cálculo automático de sumas desde 10_Detalles de Ordenes
             df_det_actual = df_detalles[df_detalles["ID Orden"] == id_ot_val]
             calc_mo = float(df_det_actual[df_det_actual["Tipo Item"] == "Mano de Obra"]["Costo Unitario"].sum()) if not df_det_actual.empty else 0.0
             calc_rep = float(df_det_actual[df_det_actual["Tipo Item"] == "Repuestos"]["Precio Venta Unitario"].sum()) if not df_det_actual.empty else 0.0
@@ -507,7 +515,6 @@ elif menu_opcion == "Ordenes de Trabajo":
             m_obra = ot_row_val1.number_input("Mano de Obra (L)", value=calc_mo, step=100.0, disabled=True)
             repuestos = ot_row_val2.number_input("Repuestos (L)", value=calc_rep, step=100.0, disabled=True)
             
-            # --- ACCIÓN PRINCIPAL ---
             btn_ot_label = "Actualizar Orden" if st.session_state.ot_form_data['is_edit'] else "Crear Orden de Trabajo"
             if st.button(btn_ot_label, type="primary", use_container_width=True):
                 sub_venta = m_obra + repuestos
@@ -524,10 +531,11 @@ elif menu_opcion == "Ordenes de Trabajo":
                     m_obra, repuestos, costo_base, sub_venta, isv, total_cobro, utilidad
                 ]
                 
-                # Guardado optimizado de Orden de Trabajo
                 guardar_registro("2_Ordenes de Trabajo", "ID Orden", id_ot_val, nueva_ot)
                 
                 st.success("Orden Guardada Correctamente.")
+                if 'last_selected_ot_idx' in st.session_state:
+                    del st.session_state['last_selected_ot_idx']
                 st.rerun()
 
             st.divider()
@@ -572,7 +580,6 @@ elif menu_opcion == "Ordenes de Trabajo":
                     subtotal_venta_calc, ganancia_bruta_calc, comentario_serv
                 ]
                 
-                # Guardado optimizado de Servicio
                 guardar_registro("10_Detalles de Ordenes", "ID Servicio", id_serv_auto, nuevo_detalle)
                 
                 st.success(f"Servicio {id_serv_auto} agregado a la orden.")
@@ -583,26 +590,31 @@ elif menu_opcion == "Ordenes de Trabajo":
             st.write("### Ordenes de Trabajo")
             sel_ot = st.dataframe(df_ots, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
             
-            # Parche de seguridad para el límite de índices
+            # Parche contra loop infinito también aplicado aquí
             if sel_ot and len(sel_ot.selection.rows) > 0:
                 idx = sel_ot.selection.rows[0]
                 if idx < len(df_ots):
-                    data = df_ots.iloc[idx]
-                    st.session_state.ot_form_data = {
-                        'ID Orden': str(data['ID Orden']),
-                        'Fecha Creacion': pd.to_datetime(data['Fecha Creacion']),
-                        'Fecha Cierre Tecnico': pd.to_datetime(data['Fecha Cierre Tecnico']) if not pd.isna(data['Fecha Cierre Tecnico']) and data['Fecha Cierre Tecnico'] != "" else None,
-                        'Fecha Cierra Admin': pd.to_datetime(data['Fecha Cierra Admin']) if not pd.isna(data['Fecha Cierra Admin']) and data['Fecha Cierra Admin'] != "" else None,
-                        'ID Cliente': data['ID Cliente'], 'Nombre Cliente': data['Nombre Cliente'],
-                        'Placa': data['Placa'] if not pd.isna(data['Placa']) else "",
-                        'Kilometraje': data['Kilometraje'] if not pd.isna(data['Kilometraje']) else 0,
-                        'Estado Tecnico': str(data['Estado Tecnico']) if not pd.isna(data['Estado Tecnico']) else "",
-                        'Estado Admin': str(data['Estado Admin']) if not pd.isna(data['Estado Admin']) else "",
-                        'Tipo Ingreso': data['Tipo Ingreso'], 'Forma de Pago': data['Forma de Pago'],
-                        'Total Mano de Obra': float(data['Total Mano de Obra']), 'Total Repuestos': float(data['Total Repuestos']),
-                        'is_edit': True
-                    }
-                    st.rerun()
+                    if st.session_state.get('last_selected_ot_idx') != idx:
+                        data = df_ots.iloc[idx]
+                        st.session_state.ot_form_data = {
+                            'ID Orden': str(data['ID Orden']),
+                            'Fecha Creacion': pd.to_datetime(data['Fecha Creacion']),
+                            'Fecha Cierre Tecnico': pd.to_datetime(data['Fecha Cierre Tecnico']) if not pd.isna(data['Fecha Cierre Tecnico']) and data['Fecha Cierre Tecnico'] != "" else None,
+                            'Fecha Cierra Admin': pd.to_datetime(data['Fecha Cierra Admin']) if not pd.isna(data['Fecha Cierra Admin']) and data['Fecha Cierra Admin'] != "" else None,
+                            'ID Cliente': data['ID Cliente'], 'Nombre Cliente': data['Nombre Cliente'],
+                            'Placa': data['Placa'] if not pd.isna(data['Placa']) else "",
+                            'Kilometraje': data['Kilometraje'] if not pd.isna(data['Kilometraje']) else 0,
+                            'Estado Tecnico': str(data['Estado Tecnico']) if not pd.isna(data['Estado Tecnico']) else "",
+                            'Estado Admin': str(data['Estado Admin']) if not pd.isna(data['Estado Admin']) else "",
+                            'Tipo Ingreso': data['Tipo Ingreso'], 'Forma de Pago': data['Forma de Pago'],
+                            'Total Mano de Obra': float(data['Total Mano de Obra']), 'Total Repuestos': float(data['Total Repuestos']),
+                            'is_edit': True
+                        }
+                        st.session_state.last_selected_ot_idx = idx
+                        st.rerun()
+            else:
+                if 'last_selected_ot_idx' in st.session_state:
+                    del st.session_state['last_selected_ot_idx']
 
             st.divider()
             st.write("### Detalle de Ordenes de Trabajo")
@@ -630,10 +642,6 @@ elif menu_opcion == "Finanzas":
     if not df_fin.empty:
         st.dataframe(df_fin[["ID Orden", "Nombre Cliente", "Gran Total Cobrado", "Utilidad Neta OT"]], use_container_width=True, hide_index=True)
 
-elif menu_opcion == "Clientes":
-    st.header("Base Maestra de Clientes")
-    st.dataframe(leer_datos("08_Clientes"), use_container_width=True, hide_index=True)
-
 # --- BOTÓN DE RESETEO Y SINCRONIZACIÓN ---
 st.sidebar.divider()
 if st.sidebar.button("↻ Sincronizar / Forzar Descarga"):
@@ -641,6 +649,6 @@ if st.sidebar.button("↻ Sincronizar / Forzar Descarga"):
     st.rerun()
 
 if st.sidebar.button("Resetear Formularios"):
-    for key in ['cliente_vehiculo_data', 'ot_form_data']:
+    for key in ['cliente_vehiculo_data', 'ot_form_data', 'last_selected_vehiculo_idx', 'last_selected_ot_idx']:
         if key in st.session_state: del st.session_state[key]
     st.rerun()
