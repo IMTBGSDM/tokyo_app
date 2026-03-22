@@ -104,6 +104,14 @@ def leer_datos(sheet_name):
         return st.session_state.db[sheet_name].copy()
     return pd.DataFrame(columns=SHEETS_CONFIG.get(sheet_name, []))
 
+def safe_money(val):
+    """Elimina errores de punto flotante forzando redondeo exacto de 2 decimales"""
+    try:
+        # Multiplica por 100, redondea al entero más cercano, divide entre 100
+        return round(float(val) * 100.0) / 100.0
+    except (ValueError, TypeError):
+        return 0.0
+
 def guardar_registro(sheet_name, id_col_name, id_valor, registro_lista):
     try:
         ws = sh.worksheet(sheet_name)
@@ -120,6 +128,9 @@ def guardar_registro(sheet_name, id_col_name, id_valor, registro_lista):
                 registro_formateado.append(val.strftime('%Y-%m-%d'))
             elif pd.isna(val) or val is None:
                 registro_formateado.append("")
+            elif isinstance(val, float):
+                # Forzar formato exacto de 2 decimales para Google Sheets
+                registro_formateado.append(f"{val:.2f}")
             else:
                 registro_formateado.append(str(val))
                 
@@ -192,7 +203,7 @@ def limpiar_telefono(valor):
     if pd.isna(valor) or str(valor).lower() == 'nan': return ""
     return str(valor).replace('.0', '').strip()
 
-# --- INICIALIZACIÓN ---
+# --- INICIALIZACIÓN DE ESTADOS ---
 if 'db_cargada' not in st.session_state:
     with st.spinner("Conectando y descargando base de datos segura desde la nube..."):
         inicializar_sheets()
@@ -216,11 +227,19 @@ if 'ot_form_data' not in st.session_state:
         'Total Mano de Obra': 0.0, 'Total Repuestos': 0.0, 'is_edit': False
     }
 
+if 'servicio_form_data' not in st.session_state:
+    st.session_state.servicio_form_data = {
+        'ID Servicio': '', 'Tipo Item': 'Mano de Obra', 'Descripcion': '',
+        'Mecanico Asignado': '', 'Proveedor': '', 'Cobra al Cliente': '',
+        'Estado Pago Costo': 'Pendiente', 'Fecha pago Costo': datetime.now(),
+        'Cantidad': 1, 'Costo Unitario': 0.0, 'Subtotal Costo': 0.0,
+        'Precio Venta Unitario': 0.0, 'Comentario': ''
+    }
+
 with st.sidebar:
     st.title("🚗 TOKYO GARAGE")
     st.divider()
-    # Eliminada la opción "Clientes" del menú final
-    menu_opcion = st.radio("Navegación", ["Master", "Clientes y Vehículos", "Ordenes de Trabajo", "Cotizaciones", "Nómina", "Empleados", "Kardex", "Finanzas"], index=1)
+    menu_opcion = st.radio("Navegación", ["Master", "Clientes y Vehículos", "Ordenes de Trabajo", "Cotizaciones", "Nómina", "Empleados", "Kardex", "Finanzas"], index=2)
 
 # --- MÓDULOS ---
 
@@ -238,12 +257,10 @@ elif menu_opcion == "Clientes y Vehículos":
             st.subheader("Datos del Cliente")
             c_row_header_1, c_row_header_2 = st.columns(2)
             
-            # --- LOGICA DINAMICA DE CLIENTE ---
             tipo_cli_opciones = ["Frecuente", "Nuevo", "Flota"]
             curr_tipo = st.session_state.cliente_vehiculo_data.get('Tipo', 'Nuevo')
             tipo_cli = c_row_header_1.selectbox(":red[*] Tipo", tipo_cli_opciones, index=tipo_cli_opciones.index(curr_tipo) if curr_tipo in tipo_cli_opciones else 1)
             
-            # Actualizamos el estado para la lógica de los botones
             st.session_state.cliente_vehiculo_data['Tipo'] = tipo_cli
             
             def_tel = limpiar_telefono(st.session_state.cliente_vehiculo_data.get('Teléfono', ''))
@@ -294,7 +311,6 @@ elif menu_opcion == "Clientes y Vehículos":
                 tipo_veh = "Nuevo"
                 v_header_1.write("")
             
-            # Actualizamos en el session state por si cambió manualmente
             st.session_state.cliente_vehiculo_data['Estado Vehículo'] = tipo_veh
                 
             def_km = int(st.session_state.cliente_vehiculo_data.get('Kilometraje', 0))
@@ -343,22 +359,19 @@ elif menu_opcion == "Clientes y Vehículos":
             anio_val = v_row3_1.number_input(":red[*] Año", min_value=1950, max_value=2030, value=def_anio)
             color_val = v_row3_2.text_input(":red[*] Color", value=def_color)
             
-            # Campo extraído y garantizado de ser visible sobre el botón
             notas_val = st.text_area("Notas Técnicas", value=def_notas, height=100)
             
-            # --- VALIDACIÓN DE BOTÓN Y ETIQUETA ---
             campos_obligatorios = [id_cli_display, fecha_reg, nom_cli, tel_cli, tipo_cli, id_veh_display, placa_raw, marca_val, modelo_val, anio_val, color_val]
-            # Desactivar si algún campo obligatorio está vacío/blanco
             btn_disabled = any(not str(campo).strip() for campo in campos_obligatorios)
             
             if tipo_cli in ["Nuevo", "Flota"]:
                 lbl_boton = "Ingresar Cliente y Vehículo"
             elif tipo_cli == "Frecuente" and tipo_veh == "Nuevo":
                 lbl_boton = "Ingresar Vehículo y Actualizar Cliente"
-            else: # Frecuente y Registrado
+            else: 
                 lbl_boton = "Actualizar Cliente y Vehículo"
             
-            st.write("") # Espaciador ligero
+            st.write("") 
             if st.button(lbl_boton, type="primary", use_container_width=True, disabled=btn_disabled):
                 registro_c = [id_cli_display, fecha_reg.strftime("%Y-%m-%d"), nom_cli, tel_cli, email_cli, dir_cli, tipo_cli]
                 guardar_registro("08_Clientes", "ID Cliente", id_cli_display, registro_c)
@@ -377,7 +390,6 @@ elif menu_opcion == "Clientes y Vehículos":
                 st.rerun()
 
     with col_table:
-        # La tabla 08_Clientes ahora vive arriba y es solo lectura
         st.write("### Clientes")
         st.dataframe(df_clientes_base, use_container_width=True, hide_index=True)
         
@@ -386,11 +398,9 @@ elif menu_opcion == "Clientes y Vehículos":
         df_view = df_vehiculos_base.copy()
         selected_row = st.dataframe(df_view, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
         
-        # Parche de seguridad para el límite de índices y bloqueo de loop infinito
         if selected_row and len(selected_row.selection.rows) > 0:
             idx = selected_row.selection.rows[0]
             if idx < len(df_view):
-                # Verificamos si este índice NO fue el último seleccionado para evitar el loop
                 if st.session_state.get('last_selected_vehiculo_idx') != idx:
                     data_veh = df_view.iloc[idx]
                     data_cli = df_clientes_base[df_clientes_base['ID Cliente'] == data_veh['ID Cliente']]
@@ -400,17 +410,16 @@ elif menu_opcion == "Clientes y Vehículos":
                             'ID Cliente': c['ID Cliente'], 'Nombre Cliente': c['Nombre Cliente'], 
                             'Teléfono': c['Teléfono / WhatsApp'], 'Fecha': pd.to_datetime(c['Fecha']),
                             'Correo': c['Correo Electrónico'], 'Dirección': c['Dirección'], 
-                            'Tipo': 'Frecuente', # Forzado a frecuente por selección
+                            'Tipo': 'Frecuente', 
                             'ID Vehículo': data_veh['ID Vehículo'], 'Placa': data_veh['Placa'],
                             'Marca': data_veh['Marca'], 'Modelo': data_veh['Modelo'], 'Año': data_veh['Año'], 
                             'Color': data_veh['Color'], 'Kilometraje': data_veh['Kilometraje'], 
                             'Notas': data_veh['Notas Técnicas (Detalles)'],
-                            'Estado Vehículo': 'Registrado' # Forzado a registrado por selección
+                            'Estado Vehículo': 'Registrado' 
                         }
                         st.session_state.last_selected_vehiculo_idx = idx
                         st.rerun()
         else:
-            # Si se desmarca la selección, liberamos el "candado"
             if 'last_selected_vehiculo_idx' in st.session_state:
                 del st.session_state['last_selected_vehiculo_idx']
 
@@ -509,26 +518,38 @@ elif menu_opcion == "Ordenes de Trabajo":
             ot_row_val1, ot_row_val2 = st.columns(2)
             
             df_det_actual = df_detalles[df_detalles["ID Orden"] == id_ot_val]
-            calc_mo = float(df_det_actual[df_det_actual["Tipo Item"] == "Mano de Obra"]["Costo Unitario"].sum()) if not df_det_actual.empty else 0.0
-            calc_rep = float(df_det_actual[df_det_actual["Tipo Item"] == "Repuestos"]["Precio Venta Unitario"].sum()) if not df_det_actual.empty else 0.0
             
-            m_obra = ot_row_val1.number_input("Mano de Obra (L)", value=calc_mo, step=100.0, disabled=True)
-            repuestos = ot_row_val2.number_input("Repuestos (L)", value=calc_rep, step=100.0, disabled=True)
+            # Aplicamos roundings de dinero seguros incluso en la lectura agregada
+            calc_mo = safe_money(df_det_actual[df_det_actual["Tipo Item"] == "Mano de Obra"]["Costo Unitario"].sum()) if not df_det_actual.empty else 0.0
+            calc_rep = safe_money(df_det_actual[df_det_actual["Tipo Item"] == "Repuestos"]["Precio Venta Unitario"].sum()) if not df_det_actual.empty else 0.0
+            
+            m_obra = ot_row_val1.number_input("Total Mano de Obra (L)", value=calc_mo, step=100.0, disabled=True)
+            repuestos = ot_row_val2.number_input("Total Repuestos (L)", value=calc_rep, step=100.0, disabled=True)
+            
+            # BLOQUEO DE BOTON OT
+            campos_obligatorios_ot = [f_crea, id_ot_val, nom_cli_ot, st.session_state.ot_form_data['ID Cliente']]
+            btn_ot_disabled = any(not str(campo).strip() for campo in campos_obligatorios_ot)
             
             btn_ot_label = "Actualizar Orden" if st.session_state.ot_form_data['is_edit'] else "Crear Orden de Trabajo"
-            if st.button(btn_ot_label, type="primary", use_container_width=True):
-                sub_venta = m_obra + repuestos
-                costo_base = m_obra * 0.80
-                isv = (sub_venta - (repuestos * 0.15)) * 0.15 if t_ingreso == "Con Factura" else 0.0
-                total_cobro = sub_venta + isv
-                utilidad = sub_venta - costo_base
+            if st.button(btn_ot_label, type="primary", use_container_width=True, disabled=btn_ot_disabled):
+                # Aplicamos el filtro para precisión de punto flotante puro a todas las operaciones
+                m_obra_safe = safe_money(m_obra)
+                repuestos_safe = safe_money(repuestos)
+                sub_venta = safe_money(m_obra_safe + repuestos_safe)
+                costo_base = safe_money(m_obra_safe * 0.80)
+                
+                isv_raw = (sub_venta - safe_money(repuestos_safe * 0.15)) * 0.15 if t_ingreso == "Con Factura" else 0.0
+                isv = safe_money(isv_raw)
+                
+                total_cobro = safe_money(sub_venta + isv)
+                utilidad = safe_money(sub_venta - costo_base)
                 
                 nueva_ot = [
                     id_ot_val, f_crea.strftime("%Y-%m-%d"), 
                     f_tec.strftime("%Y-%m-%d") if f_tec else "", f_adm.strftime("%Y-%m-%d") if f_adm else "",
                     st.session_state.ot_form_data['ID Cliente'], st.session_state.ot_form_data['Nombre Cliente'], 
                     placa_ot_sel, km_ot_val, est_tec, est_adm, t_ingreso, f_pago,
-                    m_obra, repuestos, costo_base, sub_venta, isv, total_cobro, utilidad
+                    m_obra_safe, repuestos_safe, costo_base, sub_venta, isv, total_cobro, utilidad
                 ]
                 
                 guardar_registro("2_Ordenes de Trabajo", "ID Orden", id_ot_val, nueva_ot)
@@ -541,37 +562,55 @@ elif menu_opcion == "Ordenes de Trabajo":
             st.divider()
             st.subheader("Servicios")
             
-            id_serv_auto = generar_id_servicio(id_ot_val)
-            
             s_col1, s_col2 = st.columns(2)
-            tipo_item = s_col1.selectbox("Tipo Item", ["Mano de Obra", "Repuestos"])
-            s_col2.text_input("ID Servicio", value=id_serv_auto, disabled=True)
+            curr_tipo_item = st.session_state.servicio_form_data['Tipo Item']
+            tipo_item = s_col1.selectbox(":red[*] Tipo Item", ["Mano de Obra", "Repuestos"], index=0 if curr_tipo_item == "Mano de Obra" else 1)
             
-            desc_serv = st.text_input("Descripcion")
+            id_serv_auto = st.session_state.servicio_form_data['ID Servicio'] if st.session_state.servicio_form_data['ID Servicio'] else generar_id_servicio(id_ot_val)
+            s_col2.text_input(":red[*] ID Servicio", value=id_serv_auto, disabled=True)
+            
+            desc_serv = st.text_input(":red[*] Descripcion", value=st.session_state.servicio_form_data['Descripcion'])
             
             s_col3, s_col4 = st.columns(2)
             lista_mecanicos = [""] + df_empleados["Nombre Completo"].dropna().tolist() if not df_empleados.empty else [""]
-            mec_asignado = s_col3.selectbox("Mecanico Asignado", options=lista_mecanicos)
-            proveedor = s_col4.text_input("Proveedor")
+            curr_mec = st.session_state.servicio_form_data['Mecanico Asignado']
+            mec_asignado = s_col3.selectbox(":red[*] Mecanico Asignado", options=lista_mecanicos, index=lista_mecanicos.index(curr_mec) if curr_mec in lista_mecanicos else 0)
+            
+            proveedor = s_col4.text_input("Proveedor", value=st.session_state.servicio_form_data['Proveedor'])
             
             s_col5, s_col6 = st.columns(2)
-            cobra_cliente = s_col5.text_input("Cobra al Cliente")
-            est_pago_costo = s_col6.selectbox("Estado Pago Costo", ["Pendiente", "Pagado", "N/A"])
+            cobra_cliente = s_col5.text_input("Cobra al Cliente", value=st.session_state.servicio_form_data['Cobra al Cliente'])
+            
+            curr_est_pago = st.session_state.servicio_form_data['Estado Pago Costo']
+            opciones_est_pago = ["Pendiente", "Pagado", "N/A"]
+            est_pago_costo = s_col6.selectbox("Estado Pago Costo", opciones_est_pago, index=opciones_est_pago.index(curr_est_pago) if curr_est_pago in opciones_est_pago else 0)
             
             s_col7, s_col8 = st.columns(2)
-            fecha_pago_costo = s_col7.date_input("Fecha pago Costo", value=datetime.now(), format="DD/MM/YYYY")
-            cantidad_serv = s_col8.number_input("Cantidad", min_value=1, step=1, value=1)
+            fecha_pago_costo = s_col7.date_input("Fecha pago Costo", value=st.session_state.servicio_form_data['Fecha pago Costo'], format="DD/MM/YYYY")
+            cantidad_serv = s_col8.number_input("Cantidad", min_value=1, step=1, value=int(st.session_state.servicio_form_data['Cantidad']))
             
             s_col9, s_col10, s_col11 = st.columns(3)
-            costo_uni = s_col9.number_input("Costo Unitario (L)", format="%.2f", step=0.01)
-            subtotal_costo = s_col10.number_input("Subtotal Costo (L)", format="%.2f", step=0.01)
-            precio_venta_uni = s_col11.number_input("Precio Venta Unitario (L)", format="%.2f", step=0.01)
+            costo_uni_input = s_col9.number_input("Costo Unitario (L)", format="%.2f", step=0.01, value=float(st.session_state.servicio_form_data['Costo Unitario']))
+            subtotal_costo_input = s_col10.number_input("Subtotal Costo (L)", format="%.2f", step=0.01, value=float(st.session_state.servicio_form_data['Subtotal Costo']))
+            precio_venta_uni_input = s_col11.number_input("Precio Venta Unitario (L)", format="%.2f", step=0.01, value=float(st.session_state.servicio_form_data['Precio Venta Unitario']))
             
-            comentario_serv = st.text_area("Comentario", height=68)
+            comentario_serv = st.text_area("Comentario", height=68, value=st.session_state.servicio_form_data['Comentario'])
             
-            if st.button("Grabar Servicio en Orden", type="primary", use_container_width=True):
-                subtotal_venta_calc = costo_uni 
-                ganancia_bruta_calc = costo_uni + subtotal_costo - precio_venta_uni
+            # BLOQUEO DE BOTON SERVICIO Y LOGICA MUTANTE
+            btn_serv_disabled = not (tipo_item and id_serv_auto and desc_serv and mec_asignado)
+            
+            # Comparamos matemáticamente usando dataframes si el servicio ya existe
+            existe_servicio = not df_detalles[(df_detalles["ID Orden"] == id_ot_val) & (df_detalles["ID Servicio"] == id_serv_auto)].empty
+            btn_serv_label = "Actualizar Servicio en Orden" if existe_servicio else "Grabar Servicio en Orden"
+            
+            if st.button(btn_serv_label, type="primary", use_container_width=True, disabled=btn_serv_disabled):
+                # Redondeo exacto a 2 cifras eliminando rastro de punto flotante
+                costo_uni = safe_money(costo_uni_input)
+                subtotal_costo = safe_money(subtotal_costo_input)
+                precio_venta_uni = safe_money(precio_venta_uni_input)
+                
+                subtotal_venta_calc = safe_money(costo_uni) 
+                ganancia_bruta_calc = safe_money(costo_uni + subtotal_costo - precio_venta_uni)
                 
                 nuevo_detalle = [
                     id_ot_val, id_serv_auto, tipo_item, desc_serv, mec_asignado,
@@ -582,7 +621,18 @@ elif menu_opcion == "Ordenes de Trabajo":
                 
                 guardar_registro("10_Detalles de Ordenes", "ID Servicio", id_serv_auto, nuevo_detalle)
                 
-                st.success(f"Servicio {id_serv_auto} agregado a la orden.")
+                st.success(f"Servicio {id_serv_auto} guardado/actualizado en la orden.")
+                if 'last_selected_det_idx' in st.session_state:
+                    del st.session_state['last_selected_det_idx']
+                
+                # Resetear el form del servicio para forzar un nuevo input limpio
+                st.session_state.servicio_form_data = {
+                    'ID Servicio': '', 'Tipo Item': 'Mano de Obra', 'Descripcion': '',
+                    'Mecanico Asignado': '', 'Proveedor': '', 'Cobra al Cliente': '',
+                    'Estado Pago Costo': 'Pendiente', 'Fecha pago Costo': datetime.now(),
+                    'Cantidad': 1, 'Costo Unitario': 0.0, 'Subtotal Costo': 0.0,
+                    'Precio Venta Unitario': 0.0, 'Comentario': ''
+                }
                 st.rerun()
 
     with col_table:
@@ -590,7 +640,6 @@ elif menu_opcion == "Ordenes de Trabajo":
             st.write("### Ordenes de Trabajo")
             sel_ot = st.dataframe(df_ots, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
             
-            # Parche contra loop infinito también aplicado aquí
             if sel_ot and len(sel_ot.selection.rows) > 0:
                 idx = sel_ot.selection.rows[0]
                 if idx < len(df_ots):
@@ -610,6 +659,18 @@ elif menu_opcion == "Ordenes de Trabajo":
                             'Total Mano de Obra': float(data['Total Mano de Obra']), 'Total Repuestos': float(data['Total Repuestos']),
                             'is_edit': True
                         }
+                        
+                        # Limpiar el formulario de Servicios al cambiar de OT
+                        st.session_state.servicio_form_data = {
+                            'ID Servicio': '', 'Tipo Item': 'Mano de Obra', 'Descripcion': '',
+                            'Mecanico Asignado': '', 'Proveedor': '', 'Cobra al Cliente': '',
+                            'Estado Pago Costo': 'Pendiente', 'Fecha pago Costo': datetime.now(),
+                            'Cantidad': 1, 'Costo Unitario': 0.0, 'Subtotal Costo': 0.0,
+                            'Precio Venta Unitario': 0.0, 'Comentario': ''
+                        }
+                        if 'last_selected_det_idx' in st.session_state:
+                            del st.session_state['last_selected_det_idx']
+                            
                         st.session_state.last_selected_ot_idx = idx
                         st.rerun()
             else:
@@ -618,7 +679,35 @@ elif menu_opcion == "Ordenes de Trabajo":
 
             st.divider()
             st.write("### Detalle de Ordenes de Trabajo")
-            st.dataframe(df_detalles, use_container_width=True, hide_index=True)
+            
+            # Tabla interactiva para copiar datos a los campos de Servicios
+            sel_det = st.dataframe(df_detalles, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+            
+            if sel_det and len(sel_det.selection.rows) > 0:
+                idx = sel_det.selection.rows[0]
+                if idx < len(df_detalles):
+                    if st.session_state.get('last_selected_det_idx') != idx:
+                        data = df_detalles.iloc[idx]
+                        st.session_state.servicio_form_data = {
+                            'ID Servicio': data['ID Servicio'],
+                            'Tipo Item': data['Tipo Item'],
+                            'Descripcion': data['Descripcion'],
+                            'Mecanico Asignado': data['Mecanico Asignado'],
+                            'Proveedor': data['Proveedor'],
+                            'Cobra al Cliente': data['Cobra al Cliente'],
+                            'Estado Pago Costo': data['Estado Pago Costo'],
+                            'Fecha pago Costo': pd.to_datetime(data['Fecha pago Costo']) if data['Fecha pago Costo'] else datetime.now(),
+                            'Cantidad': int(data['Cantidad']) if not pd.isna(data['Cantidad']) else 1,
+                            'Costo Unitario': float(data['Costo Unitario']) if not pd.isna(data['Costo Unitario']) else 0.0,
+                            'Subtotal Costo': float(data['Subtotal Costo']) if not pd.isna(data['Subtotal Costo']) else 0.0,
+                            'Precio Venta Unitario': float(data['Precio Venta Unitario']) if not pd.isna(data['Precio Venta Unitario']) else 0.0,
+                            'Comentario': data['Comentario']
+                        }
+                        st.session_state.last_selected_det_idx = idx
+                        st.rerun()
+            else:
+                if 'last_selected_det_idx' in st.session_state:
+                    del st.session_state['last_selected_det_idx']
 
 elif menu_opcion == "Cotizaciones":
     st.header("Cotizaciones")
@@ -649,6 +738,6 @@ if st.sidebar.button("↻ Sincronizar / Forzar Descarga"):
     st.rerun()
 
 if st.sidebar.button("Resetear Formularios"):
-    for key in ['cliente_vehiculo_data', 'ot_form_data', 'last_selected_vehiculo_idx', 'last_selected_ot_idx']:
+    for key in ['cliente_vehiculo_data', 'ot_form_data', 'servicio_form_data', 'last_selected_vehiculo_idx', 'last_selected_ot_idx', 'last_selected_det_idx']:
         if key in st.session_state: del st.session_state[key]
     st.rerun()
