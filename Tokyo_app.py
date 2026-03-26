@@ -14,7 +14,7 @@ SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1anidyNrk2dsmEo-5-Q9dj
 # Regla de Oro #1: Estructura de datos intacta
 # Regla de Oro #2: No eliminar campos creados (A menos que el usuario lo exija explícitamente)
 SHEETS_CONFIG = {
-    "1_Maestro": ["Código.", "Categoría", "Descripción del Trabajo", "Tipo", "Costo Fijo"],
+    "1_Maestro": ["Código.", "Categoría", "Descripción del Trabajo", "Costo Fijo"],
     "08_Clientes": ["ID Cliente", "Fecha", "Nombre Cliente", "Teléfono / WhatsApp", "Correo Electrónico", "Dirección", "Tipo (Frecuente/Nuevo)"],
     "09_Carros por Cliente": ["ID Vehículo", "Placa", "Marca", "Modelo", "Año", "Color", "ID Cliente", "Notas Técnicas (Detalles)", "Nombre Cliente", "Kilometraje"],
     "00_Catalogos": ["Area", "Especialidades", "Proveedores"], 
@@ -26,10 +26,9 @@ SHEETS_CONFIG = {
         "Gran Total Cobrado", "Utilidad Neta OT"
     ],
     "10_Detalles de Ordenes": [
-        "ID Orden", "ID Servicio", "Tipo Item", "Descripcion", "Mecanico Asignado", 
-        "Proveedor", "Cobra al Cliente", "Estado Pago Costo", "Fecha pago Costo", 
-        "Cantidad", "Costo Unitario", "Subtotal Costo", "Subtotal Venta", 
-        "Ganancia Bruta", "Comentario"
+        "Fecha Creación", "ID Orden", "ID Servicio", "Tipo Item", "Descripcion", 
+        "Mecanico Asignado", "Proveedor", "Cantidad", "Costo Unitario", 
+        "Subtotal Costo", "Subtotal Venta", "Ganancia Bruta", "Comentario"
     ], 
     "11_Cotizaciones": ["ID Cotizacion", "ID Cliente", "Nombre Cliente", "ID Vehiculo", "Fecha Cotizacion", "Precio", "Impuesto", "Total"],
     "3_Nomina": ["ID OT", "Servicio Realizado", "Técnico Asignado", "Fecha Terminado", "Subtotal Servicio", "Pago a Empleado", "Margen Bruto"],
@@ -247,24 +246,23 @@ if 'servicio_agregado_exitoso' not in st.session_state:
 
 if 'servicio_form_data' not in st.session_state:
     st.session_state.servicio_form_data = {
-        'ID Orden': '', 'ID Servicio': '', 'Tipo Item': 'Mano de Obra', 'Descripcion': '',
-        'Mecanico Asignado': '', 'Proveedor': '', 'Cobra al Cliente': '',
-        'Estado Pago Costo': 'Pendiente', 'Fecha pago Costo': datetime.now(),
+        'Fecha Creación': datetime.now(), 'ID Orden': '', 'ID Servicio': '', 
+        'Tipo Item': 'Mano de Obra', 'Descripcion': '',
+        'Mecanico Asignado': '', 'Proveedor': '', 
         'Cantidad': 1, 'Costo Unitario': 0.0, 'Subtotal Costo': 0.0, 'Comentario': ''
     }
 
 # --- NAVEGACIÓN LATERAL ---
 menu_items = [
     "Master", "Catálogos", "Clientes y Vehículos", "Generar Orden de Trabajo", 
-    "Servicios", "Cerrar Orden de Trabajo", "Cotizaciones", 
-    "Nómina", "Empleados", "Kardex", "Finanzas"
+    "Servicios", "Detalles de Ordenes de Trabajo", "Cerrar Orden de Trabajo", 
+    "Cotizaciones", "Nómina", "Empleados", "Kardex", "Finanzas"
 ]
 
 with st.sidebar:
     st.title("🚗 TOKYO GARAGE")
     st.divider()
     
-    # Solución al StreamlitAPIException: Desacoplar la key del widget del estado lógico
     idx = menu_items.index(st.session_state.menu_opcion) if st.session_state.menu_opcion in menu_items else 3
     
     def menu_callback():
@@ -383,7 +381,7 @@ elif menu_opcion == "Clientes y Vehículos":
         st.write("### Vehículos")
         st.dataframe(df_vehiculos_base, use_container_width=True, hide_index=True)
 
-# --- SECCIÓN MEJORADA: GENERAR ORDEN DE TRABAJO ---
+# --- SECCIÓN: GENERAR ORDEN DE TRABAJO ---
 elif menu_opcion == "Generar Orden de Trabajo":
     col_form, col_space, col_table = st.columns([2.2, 0.1, 3.2])
     df_clientes = leer_datos("08_Clientes")
@@ -406,7 +404,6 @@ elif menu_opcion == "Generar Orden de Trabajo":
             
             col_cli_1, col_cli_2 = st.columns(2)
             
-            # El nombre es siempre una lista desplegable de clientes existentes.
             noms_cli_list = [""] + sorted(df_clientes["Nombre Cliente"].dropna().unique().tolist())
             curr_nom = st.session_state.ot_form_data.get('Nombre Cliente', '')
             
@@ -442,7 +439,6 @@ elif menu_opcion == "Generar Orden de Trabajo":
             st.write("")
             
             if not ot_lock:
-                # MODO EDICIÓN / CREACIÓN
                 campos_obligatorios_ot = [f_crea, id_ot_val, nom_cli_ot, placa_ot_sel]
                 btn_ot_disabled = any(not str(campo).strip() for campo in campos_obligatorios_ot)
                 
@@ -464,7 +460,6 @@ elif menu_opcion == "Generar Orden de Trabajo":
                     st.session_state.id_ot_generada = id_ot_val
                     st.rerun()
             else:
-                # MODO BLOQUEADO (Orden ya creada, evita doble clic y da opciones de seguimiento)
                 st.success(f"¡Orden {st.session_state.id_ot_generada} creada con éxito!")
                 
                 c_btn1, c_btn2, c_btn3 = st.columns(3)
@@ -479,7 +474,7 @@ elif menu_opcion == "Generar Orden de Trabajo":
                 with c_btn2:
                     if st.button("Continuar con Servicios", type="primary", use_container_width=True):
                         st.session_state.servicio_form_data['ID Orden'] = st.session_state.id_ot_generada
-                        st.session_state.menu_opcion = "Servicios" # Actualización segura del menú
+                        st.session_state.menu_opcion = "Servicios" 
                         st.session_state.ot_generada_exitosa = False 
                         st.session_state.id_ot_generada = ""
                         st.rerun()
@@ -493,10 +488,10 @@ elif menu_opcion == "Generar Orden de Trabajo":
 
     with col_table:
         with st.container(height=600, border=False):
-            st.write("### Resumen de Ordenes de Trabajo")
+            st.write("### Ordenes de Trabajo")
             st.dataframe(df_ots, use_container_width=True, hide_index=True)
 
-# --- SECCIÓN MEJORADA: SERVICIOS ---
+# --- SECCIÓN: SERVICIOS ---
 elif menu_opcion == "Servicios":
     col_form, col_space, col_table = st.columns([2.2, 0.1, 3.2])
     df_detalles = leer_datos("10_Detalles de Ordenes")
@@ -509,21 +504,25 @@ elif menu_opcion == "Servicios":
         with st.container(height=800, border=False):
             st.subheader("Agregar Servicios a Orden")
             
+            serv_lock = st.session_state.get('servicio_agregado_exitoso', False)
+            
+            # FILA 1: Fecha Creación e ID Orden
+            r1c1, r1c2 = st.columns(2)
+            fecha_creacion_serv = r1c1.date_input(":red[*] Fecha Creación", value=datetime.now(), format="DD/MM/YYYY", disabled=serv_lock)
+            
             lista_ots = [""] + df_ots["ID Orden"].dropna().tolist()
             curr_ot_serv = st.session_state.servicio_form_data.get('ID Orden', '')
             
             def sync_ot_serv():
                 st.session_state.servicio_form_data['ID Orden'] = st.session_state.sel_ot_serv_key
                 
-            serv_lock = st.session_state.get('servicio_agregado_exitoso', False)
-            
-            sel_ot_serv = st.selectbox(":red[*] Seleccionar Orden de Trabajo (ID)", options=lista_ots, 
+            sel_ot_serv = r1c2.selectbox(":red[*] Seleccionar Orden de Trabajo (ID)", options=lista_ots, 
                                        index=lista_ots.index(curr_ot_serv) if curr_ot_serv in lista_ots else 0,
                                        key="sel_ot_serv_key", on_change=sync_ot_serv, disabled=serv_lock)
             
-            # BLOQUEO MAESTRO SI NO HAY ORDEN SELECCIONADA O SI YA SE AGREGÓ UN SERVICIO
             disabled_all = not bool(sel_ot_serv) or serv_lock
             
+            # FILA 2: Modalidad y ID Servicio
             s_col1, s_col2 = st.columns(2)
             modalidad_serv = s_col1.radio("Modalidad de Servicio", ["Estándar", "Por Cotización"], horizontal=True, disabled=disabled_all)
             
@@ -531,13 +530,15 @@ elif menu_opcion == "Servicios":
             s_col2.text_input(":red[*] ID Servicio", value=id_serv_auto, disabled=True)
             
             st.write("")
-            c_cat1, c_cat2 = st.columns(2)
             
+            # FILA 3: Tipo Item y Categoría
+            c_cat1, c_cat2 = st.columns(2)
             tipo_item = c_cat1.selectbox(":red[*] Tipo Item", ["Mano de Obra", "Repuestos"], disabled=disabled_all)
             
             categorias_list = [""] + df_maestro["Categoría"].dropna().unique().tolist() if "Categoría" in df_maestro.columns else [""]
             categoria_serv = c_cat2.selectbox(":red[*] Categoría", categorias_list, disabled=disabled_all)
             
+            # FILA 4: Descripción
             if modalidad_serv == "Por Cotización":
                 desc_serv = st.text_input(":red[*] Descripción del Trabajo", disabled=disabled_all)
             else:
@@ -546,35 +547,47 @@ elif menu_opcion == "Servicios":
                     opciones_desc += df_maestro[df_maestro["Categoría"] == categoria_serv]["Descripción del Trabajo"].dropna().unique().tolist()
                 desc_serv = st.selectbox(":red[*] Descripción del Trabajo", opciones_desc, disabled=disabled_all)
             
-            s_col3, s_col4 = st.columns(2)
-            lista_mecanicos = [""] + df_empleados["Nombre Completo"].dropna().tolist() if not df_empleados.empty else [""]
-            mec_asignado = s_col3.selectbox(":red[*] Mecanico Asignado", options=lista_mecanicos, disabled=disabled_all)
+            # FILA 5: Mecánico / Proveedor (Misma ubicación) y Cantidad
+            s_col_dyn, s_col_cant = st.columns(2)
             
-            if tipo_item == "Repuestos":
+            if tipo_item == "Mano de Obra":
+                lista_mecanicos = [""] + df_empleados["Nombre Completo"].dropna().tolist() if not df_empleados.empty else [""]
+                mec_asignado = s_col_dyn.selectbox(":red[*] Mecanico Asignado", options=lista_mecanicos, disabled=disabled_all)
+                proveedor = ""
+            else: # Repuestos
                 lista_prov = [""] + df_catalogos["Proveedores"].dropna().unique().tolist() if "Proveedores" in df_catalogos.columns else [""]
-                proveedor = s_col4.selectbox("Proveedor", options=lista_prov, disabled=disabled_all)
-            else:
-                proveedor = s_col4.text_input("Proveedor", value="", disabled=True)
+                proveedor = s_col_dyn.selectbox(":red[*] Proveedor", options=lista_prov, disabled=disabled_all)
+                mec_asignado = ""
+                
+            cantidad_serv = s_col_cant.number_input("Cantidad", min_value=1, step=1, disabled=disabled_all)
             
-            s_col5, s_col6 = st.columns(2)
-            cobra_cliente = s_col5.text_input("Cobra al Cliente", disabled=disabled_all)
-            est_pago_costo = s_col6.selectbox("Estado Pago Costo", ["Pendiente", "Pagado", "N/A"], disabled=disabled_all)
-            
-            s_col7, s_col8 = st.columns(2)
-            fecha_pago_costo = s_col7.date_input("Fecha pago Costo", value=datetime.now(), format="DD/MM/YYYY", disabled=disabled_all)
-            cantidad_serv = s_col8.number_input("Cantidad", min_value=1, step=1, disabled=disabled_all)
-            
+            # FILA 6: Costos
             s_col9, s_col10 = st.columns(2)
-            costo_uni_input = s_col9.number_input("Costo Unitario (L)", format="%.2f", step=0.01, disabled=disabled_all)
+            
+            if tipo_item == "Mano de Obra":
+                costo_fijo_calc = 0.0
+                if desc_serv:
+                    match_m = df_maestro[df_maestro["Descripción del Trabajo"] == desc_serv]
+                    if not match_m.empty and "Costo Fijo" in match_m.columns:
+                        costo_fijo_calc = safe_money(match_m.iloc[0]["Costo Fijo"])
+                costo_uni_input = s_col9.number_input("Costo Unitario (L)", value=float(costo_fijo_calc), disabled=True)
+            else:
+                costo_uni_input = s_col9.number_input("Costo Unitario (L)", format="%.2f", step=0.01, disabled=disabled_all)
             
             subtotal_costo_calc = safe_money(cantidad_serv * costo_uni_input)
             s_col10.number_input("Subtotal Costo (L)", value=subtotal_costo_calc, disabled=True)
             
+            # FILA 7: Comentarios
             comentario_serv = st.text_area("Comentario", height=68, disabled=disabled_all)
             
             # --- LÓGICA DE BOTONES PARA SERVICIOS ---
             if not serv_lock:
-                btn_serv_disabled = disabled_all or not (sel_ot_serv and tipo_item and desc_serv and mec_asignado and categoria_serv)
+                # Validar botones según el tipo de item para hacer obligatorios los campos dinámicos
+                btn_serv_disabled = disabled_all or not (sel_ot_serv and desc_serv and categoria_serv)
+                if tipo_item == "Mano de Obra" and not mec_asignado:
+                    btn_serv_disabled = True
+                elif tipo_item == "Repuestos" and not proveedor:
+                    btn_serv_disabled = True
                 
                 if st.button("Agregar Servicio a Orden", type="primary", use_container_width=True, disabled=btn_serv_disabled):
                     
@@ -583,10 +596,9 @@ elif menu_opcion == "Servicios":
                     ganancia_bruta_calc = "" 
                     
                     nuevo_detalle = [
-                        sel_ot_serv, id_serv_auto, tipo_item, desc_serv, mec_asignado,
-                        proveedor, cobra_cliente, est_pago_costo, fecha_pago_costo.strftime("%Y-%m-%d"),
-                        cantidad_serv, costo_uni, subtotal_costo_calc,
-                        subtotal_venta_calc, ganancia_bruta_calc, comentario_serv
+                        fecha_creacion_serv.strftime("%Y-%m-%d"), sel_ot_serv, id_serv_auto, 
+                        tipo_item, desc_serv, mec_asignado, proveedor, cantidad_serv, 
+                        costo_uni, subtotal_costo_calc, subtotal_venta_calc, ganancia_bruta_calc, comentario_serv
                     ]
                     
                     guardar_registro("10_Detalles de Ordenes", "ID Servicio", id_serv_auto, nuevo_detalle)
@@ -607,7 +619,6 @@ elif menu_opcion == "Servicios":
                         
                 with c_btn2:
                     if st.button("Continuar con Cierre", type="primary", use_container_width=True):
-                        # Cargar datos de la OT para la sección de cierre
                         match_ot = df_ots[df_ots["ID Orden"] == sel_ot_serv]
                         if not match_ot.empty:
                             data = match_ot.iloc[0]
@@ -638,9 +649,9 @@ elif menu_opcion == "Servicios":
 
     with col_table:
         with st.container(height=800, border=False):
-            st.write("### Detalle General de Ordenes de Trabajo")
-            # Altura limitada para que no crezca infinito
-            st.dataframe(df_detalles, use_container_width=True, hide_index=True, height=250)
+            st.write("### Ordenes de Trabajo")
+            # Mostrar tabla de órdenes de trabajo en lugar de detalles
+            st.dataframe(df_ots, use_container_width=True, hide_index=True, height=250)
             
             st.divider()
             
@@ -658,12 +669,19 @@ elif menu_opcion == "Servicios":
                     c_met2.metric("Total Costo (M.O.)", f"L. {safe_money(mo_total):.2f}")
                     c_met3.metric("Total Costo (Rep.)", f"L. {safe_money(rep_total):.2f}")
                     
-                    st.dataframe(df_cart[["ID Servicio", "Tipo Item", "Descripcion", "Cantidad", "Subtotal Costo"]], 
-                                 use_container_width=True, hide_index=True, height=250)
+                    # Carrito mostrará las columnas relevantes para lectura rápida
+                    columnas_carrito = ["ID Servicio", "Tipo Item", "Descripcion", "Cantidad", "Subtotal Costo"]
+                    st.dataframe(df_cart[columnas_carrito], use_container_width=True, hide_index=True, height=250)
                 else:
                     st.info("Aún no se han agregado servicios a esta Orden de Trabajo.")
             else:
                 st.info("Selecciona una Orden de Trabajo para ver el carrito de servicios.")
+
+# --- SECCIÓN NUEVA: DETALLES DE ORDENES DE TRABAJO ---
+elif menu_opcion == "Detalles de Ordenes de Trabajo":
+    st.header("Detalles de Ordenes de Trabajo (Histórico de Servicios)")
+    df_detalles = leer_datos("10_Detalles de Ordenes")
+    st.dataframe(df_detalles, use_container_width=True, hide_index=True)
 
 # --- SECCIÓN: CERRAR ORDEN DE TRABAJO ---
 elif menu_opcion == "Cerrar Orden de Trabajo":
@@ -672,7 +690,11 @@ elif menu_opcion == "Cerrar Orden de Trabajo":
     df_detalles = leer_datos("10_Detalles de Ordenes")
 
     with col_form:
-        with st.container(height=800, border=False):
+        if st.button("⬅ Regresar a Servicios"):
+            st.session_state.menu_opcion = "Servicios"
+            st.rerun()
+            
+        with st.container(height=750, border=False):
             st.subheader("Cerrar Orden de Trabajo")
             
             ot_row1_1, ot_row1_2 = st.columns(2)
