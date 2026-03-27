@@ -28,7 +28,7 @@ SHEETS_CONFIG = {
     "10_Detalles de Ordenes": [
         "Fecha Creación", "ID Orden", "ID Servicio", "Tipo Item", "Descripcion", 
         "Mecanico Asignado", "Proveedor", "Cantidad", "Costo Unitario", 
-        "Subtotal Costo", "Subtotal Venta", "Ganancia Bruta", "Comentario"
+        "Subtotal Costo", "Ganancia Bruta", "Comentario"
     ], 
     "11_Cotizaciones": ["ID Cotizacion", "ID Cliente", "Nombre Cliente", "ID Vehiculo", "Fecha Cotizacion", "Precio", "Impuesto", "Total"],
     "3_Nomina": ["ID OT", "Servicio Realizado", "Técnico Asignado", "Fecha Terminado", "Subtotal Servicio", "Pago a Empleado", "Margen Bruto"],
@@ -131,6 +131,7 @@ def guardar_registro(sheet_name, id_col_name, id_valor, registro_lista):
             else:
                 registro_formateado.append(str(val))
                 
+        # Actualizar Google Sheets en su lugar
         if id_valor in col_vals:
             row_idx = col_vals.index(id_valor) + 1
             from gspread.utils import rowcol_to_a1
@@ -139,13 +140,16 @@ def guardar_registro(sheet_name, id_col_name, id_valor, registro_lista):
         else:
             ws.append_row(registro_formateado)
             
+        # Actualizar Dataframe en su lugar (In-Place)
         df_actual = st.session_state.db[sheet_name]
-        nuevo_df = pd.DataFrame([registro_lista], columns=SHEETS_CONFIG[sheet_name])
-        
         if id_valor in df_actual[id_col_name].values:
-            df_actual = df_actual[df_actual[id_col_name] != id_valor]
-            
-        st.session_state.db[sheet_name] = pd.concat([df_actual, nuevo_df], ignore_index=True)
+            idx = df_actual.index[df_actual[id_col_name] == id_valor].tolist()[0]
+            for col_name, val in zip(SHEETS_CONFIG[sheet_name], registro_lista):
+                df_actual.at[idx, col_name] = val
+            st.session_state.db[sheet_name] = df_actual
+        else:
+            nuevo_df = pd.DataFrame([registro_lista], columns=SHEETS_CONFIG[sheet_name])
+            st.session_state.db[sheet_name] = pd.concat([df_actual, nuevo_df], ignore_index=True)
         
     except Exception as e:
         st.error(f"Error al guardar registro en {sheet_name}: {e}")
@@ -233,7 +237,7 @@ if 'cliente_vehiculo_data' not in st.session_state:
 if 'ot_form_data' not in st.session_state:
     st.session_state.ot_form_data = {
         'ID Orden': '', 'Fecha Creacion': datetime.now(), 'ID Cliente': '', 'Nombre Cliente': '',
-        'Placa': '', 'Kilometraje': 0
+        'Placa': '', 'Kilometraje': 0, 'Estado Tecnico': 'Abierto', 'Estado Admin': 'Abierto'
     }
 
 if 'ot_generada_exitosa' not in st.session_state:
@@ -255,7 +259,7 @@ if 'servicio_form_data' not in st.session_state:
 # --- NAVEGACIÓN LATERAL ---
 menu_items = [
     "Master", "Catálogos", "Clientes y Vehículos", "Generar Orden de Trabajo", 
-    "Servicios", "Detalles de Ordenes de Trabajo", "Cerrar Orden de Trabajo", 
+    "Servicios", "Cerrar Orden de Trabajo", "Detalles de Ordenes de Trabajo", 
     "Cotizaciones", "Nómina", "Empleados", "Kardex", "Finanzas"
 ]
 
@@ -387,6 +391,9 @@ elif menu_opcion == "Generar Orden de Trabajo":
     df_clientes = leer_datos("08_Clientes")
     df_vehiculos = leer_datos("09_Carros por Cliente")
     df_ots = leer_datos("2_Ordenes de Trabajo")
+    
+    # Filtro: Mostrar solo órdenes que NO estén completamente cerradas
+    df_ots_abiertas = df_ots[(df_ots["Estado Tecnico"].fillna("") != "Cerrado") | (df_ots["Estado Admin"].fillna("") != "Cerrado")]
 
     with col_form:
         with st.container(height=600, border=False):
@@ -444,17 +451,19 @@ elif menu_opcion == "Generar Orden de Trabajo":
                 
                 if st.button("Crear Orden de Trabajo", type="primary", use_container_width=True, disabled=btn_ot_disabled):
                     
+                    # Autocompletado de Estados: "Abierto"
                     nueva_ot = [
                         id_ot_val, f_crea.strftime("%Y-%m-%d"), "", "",
                         id_cli_calc, nom_cli_ot, placa_ot_sel, km_ot_val, 
-                        "", "", "Con Factura", "Efectivo", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+                        "Abierto", "Abierto", "Con Factura", "Por definir", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
                     ]
                     
                     guardar_registro("2_Ordenes de Trabajo", "ID Orden", id_ot_val, nueva_ot)
                     
                     st.session_state.ot_form_data.update({
                         'ID Cliente': id_cli_calc, 'Nombre Cliente': nom_cli_ot, 
-                        'Placa': placa_ot_sel, 'Kilometraje': km_ot_val
+                        'Placa': placa_ot_sel, 'Kilometraje': km_ot_val,
+                        'Estado Tecnico': 'Abierto', 'Estado Admin': 'Abierto'
                     })
                     st.session_state.ot_generada_exitosa = True
                     st.session_state.id_ot_generada = id_ot_val
@@ -468,7 +477,7 @@ elif menu_opcion == "Generar Orden de Trabajo":
                     if st.button("Generar Nueva", use_container_width=True):
                         st.session_state.ot_generada_exitosa = False
                         st.session_state.id_ot_generada = ""
-                        st.session_state.ot_form_data = {'ID Orden': '', 'Fecha Creacion': datetime.now(), 'ID Cliente': '', 'Nombre Cliente': '', 'Placa': '', 'Kilometraje': 0}
+                        st.session_state.ot_form_data = {'ID Orden': '', 'Fecha Creacion': datetime.now(), 'ID Cliente': '', 'Nombre Cliente': '', 'Placa': '', 'Kilometraje': 0, 'Estado Tecnico': 'Abierto', 'Estado Admin': 'Abierto'}
                         st.rerun()
                         
                 with c_btn2:
@@ -488,8 +497,8 @@ elif menu_opcion == "Generar Orden de Trabajo":
 
     with col_table:
         with st.container(height=600, border=False):
-            st.write("### Ordenes de Trabajo")
-            st.dataframe(df_ots, use_container_width=True, hide_index=True)
+            st.write("### Ordenes de Trabajo (Abiertas)")
+            st.dataframe(df_ots_abiertas, use_container_width=True, hide_index=True)
 
 # --- SECCIÓN: SERVICIOS ---
 elif menu_opcion == "Servicios":
@@ -500,18 +509,20 @@ elif menu_opcion == "Servicios":
     df_maestro = leer_datos("1_Maestro")
     df_catalogos = leer_datos("00_Catalogos")
 
+    df_ots_abiertas = df_ots[(df_ots["Estado Tecnico"].fillna("") != "Cerrado") | (df_ots["Estado Admin"].fillna("") != "Cerrado")]
+
     with col_form:
         with st.container(height=800, border=False):
             st.subheader("Agregar Servicios a Orden")
             
             serv_lock = st.session_state.get('servicio_agregado_exitoso', False)
             
-            # FILA 1: Fecha Creación e ID Orden
             r1c1, r1c2 = st.columns(2)
             fecha_creacion_serv = r1c1.date_input(":red[*] Fecha Creación", value=datetime.now(), format="DD/MM/YYYY", disabled=serv_lock)
             
-            lista_ots = [""] + df_ots["ID Orden"].dropna().tolist()
+            lista_ots = [""] + df_ots_abiertas["ID Orden"].dropna().tolist()
             curr_ot_serv = st.session_state.servicio_form_data.get('ID Orden', '')
+            if curr_ot_serv not in lista_ots: curr_ot_serv = ""
             
             def sync_ot_serv():
                 st.session_state.servicio_form_data['ID Orden'] = st.session_state.sel_ot_serv_key
@@ -522,7 +533,6 @@ elif menu_opcion == "Servicios":
             
             disabled_all = not bool(sel_ot_serv) or serv_lock
             
-            # FILA 2: Modalidad y ID Servicio
             s_col1, s_col2 = st.columns(2)
             modalidad_serv = s_col1.radio("Modalidad de Servicio", ["Estándar", "Por Cotización"], horizontal=True, disabled=disabled_all)
             
@@ -531,14 +541,12 @@ elif menu_opcion == "Servicios":
             
             st.write("")
             
-            # FILA 3: Tipo Item y Categoría
             c_cat1, c_cat2 = st.columns(2)
             tipo_item = c_cat1.selectbox(":red[*] Tipo Item", ["Mano de Obra", "Repuestos"], disabled=disabled_all)
             
             categorias_list = [""] + df_maestro["Categoría"].dropna().unique().tolist() if "Categoría" in df_maestro.columns else [""]
             categoria_serv = c_cat2.selectbox(":red[*] Categoría", categorias_list, disabled=disabled_all)
             
-            # FILA 4: Descripción
             if modalidad_serv == "Por Cotización":
                 desc_serv = st.text_input(":red[*] Descripción del Trabajo", disabled=disabled_all)
             else:
@@ -547,21 +555,19 @@ elif menu_opcion == "Servicios":
                     opciones_desc += df_maestro[df_maestro["Categoría"] == categoria_serv]["Descripción del Trabajo"].dropna().unique().tolist()
                 desc_serv = st.selectbox(":red[*] Descripción del Trabajo", opciones_desc, disabled=disabled_all)
             
-            # FILA 5: Mecánico / Proveedor (Misma ubicación) y Cantidad
             s_col_dyn, s_col_cant = st.columns(2)
             
             if tipo_item == "Mano de Obra":
                 lista_mecanicos = [""] + df_empleados["Nombre Completo"].dropna().tolist() if not df_empleados.empty else [""]
                 mec_asignado = s_col_dyn.selectbox(":red[*] Mecanico Asignado", options=lista_mecanicos, disabled=disabled_all)
                 proveedor = ""
-            else: # Repuestos
+            else: 
                 lista_prov = [""] + df_catalogos["Proveedores"].dropna().unique().tolist() if "Proveedores" in df_catalogos.columns else [""]
                 proveedor = s_col_dyn.selectbox(":red[*] Proveedor", options=lista_prov, disabled=disabled_all)
                 mec_asignado = ""
                 
             cantidad_serv = s_col_cant.number_input("Cantidad", min_value=1, step=1, disabled=disabled_all)
             
-            # FILA 6: Costos
             s_col9, s_col10 = st.columns(2)
             
             if tipo_item == "Mano de Obra":
@@ -570,19 +576,19 @@ elif menu_opcion == "Servicios":
                     match_m = df_maestro[df_maestro["Descripción del Trabajo"] == desc_serv]
                     if not match_m.empty and "Costo Fijo" in match_m.columns:
                         costo_fijo_calc = safe_money(match_m.iloc[0]["Costo Fijo"])
-                costo_uni_input = s_col9.number_input("Costo Unitario (L)", value=float(costo_fijo_calc), disabled=True)
+                        
+                # Condición de bloqueo según modalidad de servicio
+                is_costo_disabled = disabled_all or (modalidad_serv != "Por Cotización")
+                costo_uni_input = s_col9.number_input("Costo Unitario (L)", value=float(costo_fijo_calc), disabled=is_costo_disabled)
             else:
                 costo_uni_input = s_col9.number_input("Costo Unitario (L)", format="%.2f", step=0.01, disabled=disabled_all)
             
             subtotal_costo_calc = safe_money(cantidad_serv * costo_uni_input)
             s_col10.number_input("Subtotal Costo (L)", value=subtotal_costo_calc, disabled=True)
             
-            # FILA 7: Comentarios
             comentario_serv = st.text_area("Comentario", height=68, disabled=disabled_all)
             
-            # --- LÓGICA DE BOTONES PARA SERVICIOS ---
             if not serv_lock:
-                # Validar botones según el tipo de item para hacer obligatorios los campos dinámicos
                 btn_serv_disabled = disabled_all or not (sel_ot_serv and desc_serv and categoria_serv)
                 if tipo_item == "Mano de Obra" and not mec_asignado:
                     btn_serv_disabled = True
@@ -592,13 +598,13 @@ elif menu_opcion == "Servicios":
                 if st.button("Agregar Servicio a Orden", type="primary", use_container_width=True, disabled=btn_serv_disabled):
                     
                     costo_uni = safe_money(costo_uni_input)
-                    subtotal_venta_calc = 0.0 
                     ganancia_bruta_calc = "" 
                     
+                    # Se eliminó subtotal_venta de la estructura
                     nuevo_detalle = [
                         fecha_creacion_serv.strftime("%Y-%m-%d"), sel_ot_serv, id_serv_auto, 
                         tipo_item, desc_serv, mec_asignado, proveedor, cantidad_serv, 
-                        costo_uni, subtotal_costo_calc, subtotal_venta_calc, ganancia_bruta_calc, comentario_serv
+                        costo_uni, subtotal_costo_calc, ganancia_bruta_calc, comentario_serv
                     ]
                     
                     guardar_registro("10_Detalles de Ordenes", "ID Servicio", id_serv_auto, nuevo_detalle)
@@ -625,15 +631,12 @@ elif menu_opcion == "Servicios":
                             st.session_state.ot_form_data = {
                                 'ID Orden': str(data['ID Orden']),
                                 'Fecha Creacion': pd.to_datetime(data['Fecha Creacion']),
-                                'Fecha Cierre Tecnico': pd.to_datetime(data['Fecha Cierre Tecnico']) if not pd.isna(data['Fecha Cierre Tecnico']) and data['Fecha Cierre Tecnico'] != "" else None,
-                                'Fecha Cierra Admin': pd.to_datetime(data['Fecha Cierra Admin']) if not pd.isna(data['Fecha Cierra Admin']) and data['Fecha Cierra Admin'] != "" else None,
                                 'ID Cliente': data['ID Cliente'], 'Nombre Cliente': data['Nombre Cliente'],
                                 'Placa': data['Placa'] if not pd.isna(data['Placa']) else "",
                                 'Kilometraje': data['Kilometraje'] if not pd.isna(data['Kilometraje']) else 0,
-                                'Estado Tecnico': str(data['Estado Tecnico']) if not pd.isna(data['Estado Tecnico']) else "",
-                                'Estado Admin': str(data['Estado Admin']) if not pd.isna(data['Estado Admin']) else "",
+                                'Estado Tecnico': str(data['Estado Tecnico']) if not pd.isna(data['Estado Tecnico']) else "Abierto",
+                                'Estado Admin': str(data['Estado Admin']) if not pd.isna(data['Estado Admin']) else "Abierto",
                                 'Tipo Ingreso': data['Tipo Ingreso'], 'Forma de Pago': data['Forma de Pago'],
-                                'Total Mano de Obra': float(data['Total Mano de Obra']), 'Total Repuestos': float(data['Total Repuestos'])
                             }
                         st.session_state.menu_opcion = "Cerrar Orden de Trabajo"
                         st.session_state.servicio_agregado_exitoso = False
@@ -649,9 +652,17 @@ elif menu_opcion == "Servicios":
 
     with col_table:
         with st.container(height=800, border=False):
-            st.write("### Ordenes de Trabajo")
-            # Mostrar tabla de órdenes de trabajo en lugar de detalles
-            st.dataframe(df_ots, use_container_width=True, hide_index=True, height=250)
+            st.write("### Ordenes de Trabajo (Abiertas)")
+            
+            # Carga automática del ID Orden mediante la selección en la tabla (Checkbox)
+            sel_ot_df = st.dataframe(df_ots_abiertas, use_container_width=True, hide_index=True, height=250, on_select="rerun", selection_mode="single-row")
+            if sel_ot_df and len(sel_ot_df.selection.rows) > 0:
+                idx = sel_ot_df.selection.rows[0]
+                if idx < len(df_ots_abiertas):
+                    selected_id_orden = df_ots_abiertas.iloc[idx]["ID Orden"]
+                    if st.session_state.servicio_form_data.get('ID Orden') != selected_id_orden:
+                        st.session_state.servicio_form_data['ID Orden'] = selected_id_orden
+                        st.rerun()
             
             st.divider()
             
@@ -669,7 +680,6 @@ elif menu_opcion == "Servicios":
                     c_met2.metric("Total Costo (M.O.)", f"L. {safe_money(mo_total):.2f}")
                     c_met3.metric("Total Costo (Rep.)", f"L. {safe_money(rep_total):.2f}")
                     
-                    # Carrito mostrará las columnas relevantes para lectura rápida
                     columnas_carrito = ["ID Servicio", "Tipo Item", "Descripcion", "Cantidad", "Subtotal Costo"]
                     st.dataframe(df_cart[columnas_carrito], use_container_width=True, hide_index=True, height=250)
                 else:
@@ -677,20 +687,21 @@ elif menu_opcion == "Servicios":
             else:
                 st.info("Selecciona una Orden de Trabajo para ver el carrito de servicios.")
 
-# --- SECCIÓN NUEVA: DETALLES DE ORDENES DE TRABAJO ---
-elif menu_opcion == "Detalles de Ordenes de Trabajo":
-    st.header("Detalles de Ordenes de Trabajo (Histórico de Servicios)")
-    df_detalles = leer_datos("10_Detalles de Ordenes")
-    st.dataframe(df_detalles, use_container_width=True, hide_index=True)
-
 # --- SECCIÓN: CERRAR ORDEN DE TRABAJO ---
 elif menu_opcion == "Cerrar Orden de Trabajo":
     col_form, col_space, col_table = st.columns([2.2, 0.1, 3.2])
     df_ots = leer_datos("2_Ordenes de Trabajo")
     df_detalles = leer_datos("10_Detalles de Ordenes")
+    
+    # Filtro: Mostrar solo órdenes que NO estén completamente cerradas
+    df_ots_abiertas = df_ots[(df_ots["Estado Tecnico"].fillna("") != "Cerrado") | (df_ots["Estado Admin"].fillna("") != "Cerrado")]
 
     with col_form:
-        if st.button("⬅ Regresar a Servicios"):
+        id_ot_val = st.session_state.ot_form_data.get('ID Orden', '')
+        btn_cerrar_disabled = not id_ot_val 
+            
+        btn_col1, btn_col2 = st.columns(2)
+        if btn_col1.button("⬅ Regresar a Servicios", use_container_width=True):
             st.session_state.menu_opcion = "Servicios"
             st.rerun()
             
@@ -701,7 +712,6 @@ elif menu_opcion == "Cerrar Orden de Trabajo":
             f_crea_val = st.session_state.ot_form_data.get('Fecha Creacion', '')
             if isinstance(f_crea_val, datetime): f_crea_val = f_crea_val.strftime("%d/%m/%Y")
             ot_row1_1.text_input("Fecha Creacion", value=str(f_crea_val), disabled=True)
-            id_ot_val = st.session_state.ot_form_data.get('ID Orden', '')
             ot_row1_2.text_input("ID Orden", value=id_ot_val, disabled=True)
             
             col_cli_1, col_cli_2 = st.columns(2)
@@ -715,30 +725,33 @@ elif menu_opcion == "Cerrar Orden de Trabajo":
             st.divider()
             st.write("##### Estado y Cierre Administrativo")
             
-            ot_row_est1, ot_row_est2 = st.columns(2)
-            est_tec = ot_row_est1.text_input("Estado Tecnico", value=st.session_state.ot_form_data.get('Estado Tecnico', ''))
-            est_adm = ot_row_est2.text_input("Estado Admin", value=st.session_state.ot_form_data.get('Estado Admin', ''))
+            ot_row_chk1, ot_row_chk2 = st.columns(2)
+            is_tec_cerrado = st.session_state.ot_form_data.get('Estado Tecnico', 'Abierto') == 'Cerrado'
+            is_adm_cerrado = st.session_state.ot_form_data.get('Estado Admin', 'Abierto') == 'Cerrado'
             
-            ot_row_f1, ot_row_f2 = st.columns(2)
-            f_tec = ot_row_f1.date_input("Fecha Cierre Tecnico", value=st.session_state.ot_form_data.get('Fecha Cierre Tecnico') or datetime.now(), format="DD/MM/YYYY")
-            f_adm = ot_row_f2.date_input("Fecha Cierra Admin", value=st.session_state.ot_form_data.get('Fecha Cierra Admin') or datetime.now(), format="DD/MM/YYYY")
+            # Checkboxes que sustituyen a Estado Técnico y Admin. Actuaran como "triggers" de cierre.
+            cierre_tecnico = ot_row_chk1.checkbox("Cierre Técnico", value=is_tec_cerrado, disabled=not id_ot_val or is_tec_cerrado)
+            cierre_admin = ot_row_chk2.checkbox("Cierre Administrativo", value=is_adm_cerrado, disabled=not id_ot_val or is_adm_cerrado)
 
             ot_row_fin1, ot_row_fin2 = st.columns(2)
             t_ingreso = ot_row_fin1.selectbox("Tipo Ingreso", ["Con Factura", "Sin Factura"], index=["Con Factura", "Sin Factura"].index(st.session_state.ot_form_data.get('Tipo Ingreso', 'Con Factura')))
-            f_pago = ot_row_fin2.selectbox("Forma de Pago", ["Efectivo", "Tarjeta", "Por definir"], index=["Efectivo", "Tarjeta", "Por definir"].index(st.session_state.ot_form_data.get('Forma de Pago', 'Efectivo')))
+            
+            opciones_pago = ["Por definir", "Efectivo", "Tarjeta", "Transferencia"]
+            idx_pago = opciones_pago.index(st.session_state.ot_form_data.get('Forma de Pago', 'Por definir')) if st.session_state.ot_form_data.get('Forma de Pago') in opciones_pago else 0
+            f_pago = ot_row_fin2.selectbox("Forma de Pago", opciones_pago, index=idx_pago)
             
             ot_row_val1, ot_row_val2 = st.columns(2)
             
             df_det_actual = df_detalles[df_detalles["ID Orden"] == id_ot_val]
+            # Cálculo sumando exclusivamente la columna Costo Unitario según tipo de Item
             calc_mo = safe_money(df_det_actual[df_det_actual["Tipo Item"] == "Mano de Obra"]["Costo Unitario"].sum()) if not df_det_actual.empty else 0.0
-            calc_rep = safe_money(df_det_actual[df_det_actual["Tipo Item"] == "Repuestos"]["Subtotal Venta"].sum()) if not df_det_actual.empty else 0.0
+            calc_rep = safe_money(df_det_actual[df_det_actual["Tipo Item"] == "Repuestos"]["Costo Unitario"].sum()) if not df_det_actual.empty else 0.0
             
-            m_obra = ot_row_val1.number_input("Total Mano de Obra (L)", value=calc_mo, step=100.0, disabled=True)
-            repuestos = ot_row_val2.number_input("Total Repuestos (L)", value=calc_rep, step=100.0, disabled=True)
+            m_obra = ot_row_val1.number_input("Total Mano de Obra (L)", value=calc_mo, disabled=True)
+            repuestos = ot_row_val2.number_input("Total Repuestos (L)", value=calc_rep, disabled=True)
             
-            btn_cerrar_disabled = not id_ot_val 
-            
-            if st.button("Actualizar Orden (Cierre)", type="primary", use_container_width=True, disabled=btn_cerrar_disabled):
+        with btn_col2:
+            if st.button("Actualizar Orden", type="primary", use_container_width=True, disabled=btn_cerrar_disabled):
                 
                 m_obra_safe = safe_money(m_obra)
                 repuestos_safe = safe_money(repuestos)
@@ -752,52 +765,74 @@ elif menu_opcion == "Cerrar Orden de Trabajo":
                 utilidad = safe_money(sub_venta - costo_base)
                 
                 f_crea_save = st.session_state.ot_form_data['Fecha Creacion']
-                if isinstance(f_crea_save, datetime): f_crea_save = f_crea_save.strftime("%Y-%m-%d")
+                if isinstance(f_crea_save, datetime) or isinstance(f_crea_save, pd.Timestamp): f_crea_save = f_crea_save.strftime("%Y-%m-%d")
+                
+                # Asignar estados "Cerrado" si el checkbox se activó
+                est_tec_save = "Cerrado" if cierre_tecnico else st.session_state.ot_form_data.get('Estado Tecnico', 'Abierto')
+                est_adm_save = "Cerrado" if cierre_admin else st.session_state.ot_form_data.get('Estado Admin', 'Abierto')
+                
+                # Obtener la orden existente para preservar fechas si ya estaban cerradas previamente
+                match_ot = df_ots[df_ots["ID Orden"] == id_ot_val]
+                old_f_tec = match_ot.iloc[0]["Fecha Cierre Tecnico"] if not match_ot.empty else ""
+                old_f_adm = match_ot.iloc[0]["Fecha Cierra Admin"] if not match_ot.empty else ""
+                
+                # Autocompletar con fecha de hoy si se está cerrando en este instante
+                f_tec_save = datetime.now().strftime("%Y-%m-%d") if (cierre_tecnico and not is_tec_cerrado) else old_f_tec
+                f_adm_save = datetime.now().strftime("%Y-%m-%d") if (cierre_admin and not is_adm_cerrado) else old_f_adm
+                
+                if pd.isna(f_tec_save): f_tec_save = ""
+                if pd.isna(f_adm_save): f_adm_save = ""
                 
                 ot_cerrada = [
                     id_ot_val, f_crea_save, 
-                    f_tec.strftime("%Y-%m-%d") if f_tec else "", f_adm.strftime("%Y-%m-%d") if f_adm else "",
+                    f_tec_save, f_adm_save,
                     st.session_state.ot_form_data['ID Cliente'], st.session_state.ot_form_data['Nombre Cliente'], 
                     st.session_state.ot_form_data['Placa'], st.session_state.ot_form_data['Kilometraje'], 
-                    est_tec, est_adm, t_ingreso, f_pago,
+                    est_tec_save, est_adm_save, t_ingreso, f_pago,
                     m_obra_safe, repuestos_safe, costo_base, sub_venta, isv, total_cobro, utilidad
                 ]
                 
                 guardar_registro("2_Ordenes de Trabajo", "ID Orden", id_ot_val, ot_cerrada)
                 
-                st.success("Cierre de Orden y datos financieros guardados correctamente.")
+                st.success("Orden actualizada correctamente. Si los estados se marcaron como cerrados, se registrará la fecha automáticamente.")
                 if 'last_selected_ot_cerrar_idx' in st.session_state:
                     del st.session_state['last_selected_ot_cerrar_idx']
+                # Reset formulario tras actualizar si se cerró completamente para que desaparezca
+                if est_tec_save == "Cerrado" and est_adm_save == "Cerrado":
+                     st.session_state.ot_form_data = {'ID Orden': '', 'Fecha Creacion': datetime.now(), 'Estado Tecnico': 'Abierto', 'Estado Admin': 'Abierto'}
                 st.rerun()
 
     with col_table:
         with st.container(height=800, border=False):
-            st.write("### Ordenes de Trabajo")
-            sel_ot = st.dataframe(df_ots, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+            st.write("### Ordenes de Trabajo (Abiertas)")
+            sel_ot = st.dataframe(df_ots_abiertas, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
             
             if sel_ot and len(sel_ot.selection.rows) > 0:
                 idx = sel_ot.selection.rows[0]
-                if idx < len(df_ots):
+                if idx < len(df_ots_abiertas):
                     if st.session_state.get('last_selected_ot_cerrar_idx') != idx:
-                        data = df_ots.iloc[idx]
+                        data = df_ots_abiertas.iloc[idx]
                         st.session_state.ot_form_data = {
                             'ID Orden': str(data['ID Orden']),
                             'Fecha Creacion': pd.to_datetime(data['Fecha Creacion']),
-                            'Fecha Cierre Tecnico': pd.to_datetime(data['Fecha Cierre Tecnico']) if not pd.isna(data['Fecha Cierre Tecnico']) and data['Fecha Cierre Tecnico'] != "" else None,
-                            'Fecha Cierra Admin': pd.to_datetime(data['Fecha Cierra Admin']) if not pd.isna(data['Fecha Cierra Admin']) and data['Fecha Cierra Admin'] != "" else None,
                             'ID Cliente': data['ID Cliente'], 'Nombre Cliente': data['Nombre Cliente'],
                             'Placa': data['Placa'] if not pd.isna(data['Placa']) else "",
                             'Kilometraje': data['Kilometraje'] if not pd.isna(data['Kilometraje']) else 0,
-                            'Estado Tecnico': str(data['Estado Tecnico']) if not pd.isna(data['Estado Tecnico']) else "",
-                            'Estado Admin': str(data['Estado Admin']) if not pd.isna(data['Estado Admin']) else "",
+                            'Estado Tecnico': str(data['Estado Tecnico']) if not pd.isna(data['Estado Tecnico']) else "Abierto",
+                            'Estado Admin': str(data['Estado Admin']) if not pd.isna(data['Estado Admin']) else "Abierto",
                             'Tipo Ingreso': data['Tipo Ingreso'], 'Forma de Pago': data['Forma de Pago'],
-                            'Total Mano de Obra': float(data['Total Mano de Obra']), 'Total Repuestos': float(data['Total Repuestos'])
                         }
                         st.session_state.last_selected_ot_cerrar_idx = idx
                         st.rerun()
             else:
                 if 'last_selected_ot_cerrar_idx' in st.session_state:
                     del st.session_state['last_selected_ot_cerrar_idx']
+
+# --- SECCIÓN: DETALLES DE ORDENES DE TRABAJO ---
+elif menu_opcion == "Detalles de Ordenes de Trabajo":
+    st.header("Detalles de Ordenes de Trabajo (Histórico de Servicios)")
+    df_detalles = leer_datos("10_Detalles de Ordenes")
+    st.dataframe(df_detalles, use_container_width=True, hide_index=True)
 
 # --- OTRAS SECCIONES SIMPLES ---
 elif menu_opcion == "Cotizaciones":
