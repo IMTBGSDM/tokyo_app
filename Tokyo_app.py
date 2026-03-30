@@ -17,7 +17,7 @@ SHEETS_CONFIG = {
     "1_Maestro": ["Código", "Categoría", "Descripción del Trabajo", "Tipo", "Costo Fijo"],
     "08_Clientes": ["ID Cliente", "Fecha", "Nombre Cliente", "Teléfono / WhatsApp", "Correo Electrónico", "Dirección", "Tipo (Frecuente/Nuevo)"],
     "09_Carros por Cliente": ["ID Vehículo", "Placa", "Marca", "Modelo", "Año", "Color", "ID Cliente", "Notas Técnicas (Detalles)", "Nombre Cliente", "Kilometraje"],
-    "00_Catalogos": ["Area", "Especialidades", "Proveedores"], 
+    "00_Catalogos": ["Area", "", "Especialidades", "", "Proveedores"], # Soporte para columnas vacías
     "2_Ordenes de Trabajo": [
         "ID Orden", "Fecha Creacion", "Fecha Cierre Tecnico", "Fecha Cierra Admin", 
         "ID Cliente", "Nombre Cliente", "Placa", "Kilometraje", "Estado Tecnico", 
@@ -36,6 +36,12 @@ SHEETS_CONFIG = {
     "4_Kardex CI": ["ID Producto", "Nombre", "Categoría", "Stock Inicial", "Entradas (Compras)", "Salidas (Uso)", "Stock Actual", "Costo Unitario"],
     "BD_Veh": ["Marca", "Modelo"]
 }
+
+MARCAS_COMUNES = [
+    "", "Toyota", "Nissan", "Honda", "Ford", "Chevrolet", "Hyundai", "Kia", "Mazda", 
+    "Mitsubishi", "Volkswagen", "Suzuki", "Isuzu", "BMW", "Mercedes-Benz", "Audi", 
+    "Jeep", "Lexus", "Subaru", "Volvo", "Peugeot", "Otra"
+]
 
 # --- ESTILOS CSS ---
 st.markdown("""
@@ -78,12 +84,14 @@ def cargar_toda_la_base():
     for sheet in SHEETS_CONFIG.keys():
         try:
             worksheet = sh.worksheet(sheet)
-            data = worksheet.get_all_records()
+            # Usar get_all_values para evitar crasheos con columnas vacías (ej: Catálogos)
+            data = worksheet.get_all_values()
             if not data:
-                df = pd.DataFrame(columns=worksheet.row_values(1))
+                df = pd.DataFrame(columns=SHEETS_CONFIG[sheet])
             else:
-                df = pd.DataFrame(data)
-                
+                headers = data[0]
+                unique_headers = [h if h else f"Unnamed: {i}" for i, h in enumerate(headers)]
+                df = pd.DataFrame(data[1:], columns=unique_headers)
             st.session_state.db[sheet] = df
         except Exception:
             st.session_state.db[sheet] = pd.DataFrame(columns=SHEETS_CONFIG[sheet])
@@ -99,13 +107,11 @@ def safe_money(val):
     except (ValueError, TypeError):
         return 0.0
 
-# NUEVA VERSIÓN: Acepta un diccionario para mapear independientemente del orden de columnas
 def guardar_registro(sheet_name, id_col_name, id_valor, registro_dict):
     try:
         ws = sh.worksheet(sheet_name)
         headers = ws.row_values(1)
         
-        # Formatear valores basándose estrictamente en los encabezados reales de la hoja
         registro_formateado = []
         for col in headers:
             val = registro_dict.get(col, "")
@@ -118,15 +124,9 @@ def guardar_registro(sheet_name, id_col_name, id_valor, registro_dict):
             else:
                 registro_formateado.append(str(val))
                 
-        # Buscar la columna ID real
-        if id_col_name in headers:
-            col_idx = headers.index(id_col_name) + 1
-        else:
-            col_idx = 1
-            
+        col_idx = headers.index(id_col_name) + 1 if id_col_name in headers else 1
         col_vals = ws.col_values(col_idx)
         
-        # Actualizar en su lugar en Google Sheets
         if id_valor in col_vals:
             row_idx = col_vals.index(id_valor) + 1
             from gspread.utils import rowcol_to_a1
@@ -135,13 +135,8 @@ def guardar_registro(sheet_name, id_col_name, id_valor, registro_dict):
         else:
             ws.append_row(registro_formateado)
             
-        # Actualizar Dataframe en su lugar (In-Place)
         df_actual = st.session_state.db[sheet_name]
-        
-        # Crear un dict procesado para el dataframe
-        dict_para_df = {}
-        for col, val in zip(headers, registro_formateado):
-            dict_para_df[col] = val
+        dict_para_df = {col: val for col, val in zip(headers, registro_formateado)}
             
         if id_valor in df_actual[id_col_name].values:
             idx = df_actual.index[df_actual[id_col_name] == id_valor].tolist()[0]
@@ -172,6 +167,52 @@ def eliminar_registro(sheet_name, id_col_name, id_valor):
         return True
     except Exception as e:
         st.error(f"Error al deshacer registro: {e}")
+        return False
+
+# Funciones Especializadas para Catálogos Separados
+def actualizar_catalogo(col_name, old_val, new_val, action="update"):
+    try:
+        ws = sh.worksheet("00_Catalogos")
+        headers = ws.row_values(1)
+        if col_name not in headers:
+            return False
+            
+        col_idx = headers.index(col_name) + 1
+        col_vals = ws.col_values(col_idx)
+        data_vals = col_vals[1:] if len(col_vals) > 1 else []
+
+        if action == "add":
+            if new_val and new_val not in data_vals:
+                data_vals.append(new_val)
+        elif action == "delete":
+            if old_val in data_vals:
+                data_vals.remove(old_val)
+        elif action == "update":
+            if old_val in data_vals:
+                idx = data_vals.index(old_val)
+                data_vals[idx] = new_val
+            elif new_val:
+                data_vals.append(new_val)
+
+        data_vals = [v for v in data_vals if str(v).strip() != ""]
+
+        max_rows = max(len(col_vals), len(data_vals) + 1)
+        update_matrix = [[headers[col_idx-1]]] + [[v] for v in data_vals]
+        while len(update_matrix) < max_rows:
+            update_matrix.append([""])
+
+        from gspread.utils import rowcol_to_a1
+        range_start = rowcol_to_a1(1, col_idx)
+        range_end = rowcol_to_a1(max_rows, col_idx)
+        ws.update(range_name=f"{range_start}:{range_end}", values=update_matrix)
+
+        # Forzar recarga segura del df
+        data = ws.get_all_values()
+        unique_headers = [h if h else f"Unnamed: {i}" for i, h in enumerate(data[0])]
+        st.session_state.db["00_Catalogos"] = pd.DataFrame(data[1:], columns=unique_headers)
+        return True
+    except Exception as e:
+        st.error(f"Error actualizando catálogo: {e}")
         return False
 
 def generar_id_ot():
@@ -218,7 +259,7 @@ def limpiar_telefono(valor):
     return str(valor).replace('.0', '').strip()
 
 # Integración Dinámica con API NHTSA para Modelos
-@st.cache_data(ttl=86400) # Cachear por 24 horas para no saturar API
+@st.cache_data(ttl=86400)
 def obtener_modelos_api(marca):
     if not marca or len(marca) < 2: return []
     try:
@@ -257,20 +298,15 @@ if 'ot_seleccionada_servicios' not in st.session_state:
 menu_items = [
     "Master", "Catálogos", "Clientes y Vehículos", "Generar Orden de Trabajo", 
     "Servicios", "Cerrar Orden de Trabajo", "Detalles de Ordenes de Trabajo", 
-    "Cotizaciones", "Nómina", "Empleados", "Kardex", "Finanzas"
+    "Cotizaciones", "Nómina", "Empleados", "Inventario", "Finanzas"
 ]
 
 with st.sidebar:
     st.title("🚗 TOKYO GARAGE")
     st.divider()
     
-    idx = menu_items.index(st.session_state.menu_opcion) if st.session_state.menu_opcion in menu_items else 3
-    
-    def menu_callback():
-        st.session_state.menu_opcion = st.session_state._menu_radio_widget
-        
-    st.radio("Navegación", menu_items, index=idx, key="_menu_radio_widget", on_change=menu_callback)
-    menu_opcion = st.session_state.menu_opcion
+    # Sincronización automática a través de st.session_state
+    menu_opcion = st.radio("Navegación", menu_items, key="menu_opcion")
     
     st.divider()
     if st.button("↻ Sincronizar / Forzar Descarga"):
@@ -291,8 +327,10 @@ if menu_opcion == "Master":
             
             master_lock = st.session_state.master_agregado_exitoso
             
-            codigo_val = st.text_input(":red[*] Código", value=st.session_state.master_form_data.get('Código', ''), disabled=master_lock)
-            categoria_val = st.text_input(":red[*] Categoría", value=st.session_state.master_form_data.get('Categoría', ''), disabled=master_lock)
+            m_r1_1, m_r1_2 = st.columns(2)
+            codigo_val = m_r1_1.text_input(":red[*] Código", value=st.session_state.master_form_data.get('Código', ''), disabled=master_lock)
+            categoria_val = m_r1_2.text_input(":red[*] Categoría", value=st.session_state.master_form_data.get('Categoría', ''), disabled=master_lock)
+            
             desc_val = st.text_area(":red[*] Descripción del Trabajo", value=st.session_state.master_form_data.get('Descripción del Trabajo', ''), disabled=master_lock)
             
             c_m1, c_m2 = st.columns(2)
@@ -363,10 +401,56 @@ if menu_opcion == "Master":
                 if 'last_master_idx' in st.session_state:
                     del st.session_state['last_master_idx']
 
+# --- SECCIÓN: CATÁLOGOS ---
 elif menu_opcion == "Catálogos":
     st.header("Catálogos Generales")
-    st.dataframe(leer_datos("00_Catalogos"), use_container_width=True, hide_index=True)
+    df_catalogos = leer_datos("00_Catalogos")
+    
+    c1, c2, c3 = st.columns(3)
+    
+    catalogos_config = [
+        ("Area", c1, "Área"),
+        ("Especialidades", c2, "Especialidades"),
+        ("Proveedores", c3, "Proveedores")
+    ]
+    
+    for col_name, st_col, title in catalogos_config:
+        with st_col:
+            with st.container(height=500, border=True):
+                st.write(f"### {title}")
+                
+                # Filtrar solo la columna específica quitando vacíos
+                if col_name in df_catalogos.columns:
+                    df_sub = df_catalogos[[col_name]].copy()
+                    df_sub = df_sub[df_sub[col_name].astype(str).str.strip() != ""]
+                else:
+                    df_sub = pd.DataFrame(columns=[col_name])
+                    
+                sel_cat = st.dataframe(df_sub, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key=f"tbl_{col_name}")
+                
+                selected_val = ""
+                if sel_cat and len(sel_cat.selection.rows) > 0:
+                    idx = sel_cat.selection.rows[0]
+                    selected_val = str(df_sub.iloc[idx][col_name])
+                    
+                input_val = st.text_input("Valor a gestionar", value=selected_val, key=f"in_{col_name}")
+                
+                btn_col1, btn_col2 = st.columns(2)
+                
+                if btn_col1.button("Crear/Actualizar", key=f"btn_save_{col_name}", type="primary", use_container_width=True):
+                    if input_val.strip():
+                        if selected_val:
+                            actualizar_catalogo(col_name, selected_val, input_val.strip(), "update")
+                        else:
+                            actualizar_catalogo(col_name, "", input_val.strip(), "add")
+                        st.rerun()
+                        
+                if btn_col2.button("Eliminar", key=f"btn_del_{col_name}", type="secondary", use_container_width=True):
+                    if selected_val:
+                        actualizar_catalogo(col_name, selected_val, "", "delete")
+                        st.rerun()
 
+# --- SECCIÓN: CLIENTES Y VEHÍCULOS ---
 elif menu_opcion == "Clientes y Vehículos":
     col_form, col_space, col_table = st.columns([2, 0.1, 3.2])
     df_clientes_base = leer_datos("08_Clientes")
@@ -431,22 +515,26 @@ elif menu_opcion == "Clientes y Vehículos":
             km_val = v_row1_2.number_input("Kilometraje Inicial", step=1000)
             
             v_row2_1, v_row2_2 = st.columns(2)
-            # Entrada de Marca
-            marca_val = v_row2_1.text_input(":red[*] Marca (Ej: Toyota)").title()
+            
+            # Selector inteligente de Marca
+            marca_sel = v_row2_1.selectbox(":red[*] Marca", MARCAS_COMUNES)
+            if marca_sel == "Otra":
+                marca_val = v_row2_1.text_input("Ingresar Marca Manualmente").title()
+            else:
+                marca_val = marca_sel
             
             # Autocompletado dinámico de la API para Modelos
             modelos_api = obtener_modelos_api(marca_val) if marca_val else []
             
             if modelos_api:
                 modelo_val = v_row2_2.selectbox(":red[*] Modelo", [""] + modelos_api)
-                if not modelo_val: # Si la API falla al traer el modelo exacto que buscan
+                if not modelo_val:
                     modelo_custom = st.text_input("Ingresar modelo manualmente si no aparece arriba")
                     if modelo_custom: modelo_val = modelo_custom
             else:
                 modelo_val = v_row2_2.text_input(":red[*] Modelo")
             
             v_row3_1, v_row3_2 = st.columns(2)
-            # Año libre, por defecto año actual
             anio_val = v_row3_1.number_input(":red[*] Año", value=datetime.now().year, step=1)
             color_val = v_row3_2.text_input(":red[*] Color")
             notas_val = st.text_area("Notas Técnicas", height=100)
@@ -575,7 +663,7 @@ elif menu_opcion == "Generar Orden de Trabajo":
                 with c_btn2:
                     if st.button("Continuar con Servicios", type="primary", use_container_width=True):
                         st.session_state.ot_seleccionada_servicios = st.session_state.id_ot_generada
-                        st.session_state.menu_opcion = "Servicios" 
+                        st.session_state.menu_opcion = "Servicios" # Actualiza el radio del menú auto
                         st.session_state.ot_generada_exitosa = False 
                         st.rerun()
                 with c_btn3:
@@ -612,15 +700,13 @@ elif menu_opcion == "Servicios":
             
             lista_ots = [""] + df_ots_abiertas["ID Orden"].dropna().tolist()
             
-            # Sincronización robusta: Desplegable
             curr_ot_serv = st.session_state.get('ot_seleccionada_servicios', '')
             idx_ot = lista_ots.index(curr_ot_serv) if curr_ot_serv in lista_ots else 0
             
-            def sync_ot_combo():
-                st.session_state.ot_seleccionada_servicios = st.session_state._cb_ot_serv
-                
+            # El selectbox ahora confía en st.session_state._cb_ot_serv de manera dinámica para override
             sel_ot_serv = r1c2.selectbox(":red[*] Seleccionar Orden de Trabajo", options=lista_ots, 
-                                       index=idx_ot, key="_cb_ot_serv", on_change=sync_ot_combo, disabled=serv_lock)
+                                       index=idx_ot, key="_cb_ot_serv", disabled=serv_lock)
+            st.session_state.ot_seleccionada_servicios = sel_ot_serv
             
             disabled_all = not bool(sel_ot_serv) or serv_lock
             
@@ -635,7 +721,6 @@ elif menu_opcion == "Servicios":
             c_cat1, c_cat2 = st.columns(2)
             tipo_item = c_cat1.selectbox(":red[*] Tipo Item", ["Mano de Obra", "Repuestos"], disabled=disabled_all)
             
-            # Filtrar Categoría basado en la Modalidad de Servicio seleccionada
             df_m_filtrado = df_maestro[df_maestro["Tipo"] == modalidad_serv] if "Tipo" in df_maestro.columns else df_maestro
             categorias_list = [""] + df_m_filtrado["Categoría"].dropna().unique().tolist() if "Categoría" in df_m_filtrado.columns else [""]
             categoria_serv = c_cat2.selectbox(":red[*] Categoría", categorias_list, disabled=disabled_all)
@@ -655,7 +740,9 @@ elif menu_opcion == "Servicios":
                 mec_asignado = s_col_dyn.selectbox(":red[*] Mecanico Asignado", options=lista_mecanicos, disabled=disabled_all)
                 proveedor = ""
             else: 
-                lista_prov = [""] + df_catalogos["Proveedores"].dropna().unique().tolist() if "Proveedores" in df_catalogos.columns else [""]
+                # Cargar proveedores y limpiar vacíos de forma segura
+                prov_limpios = df_catalogos["Proveedores"][df_catalogos["Proveedores"].astype(str).str.strip() != ""] if "Proveedores" in df_catalogos.columns else pd.Series()
+                lista_prov = [""] + prov_limpios.dropna().unique().tolist()
                 proveedor = s_col_dyn.selectbox(":red[*] Proveedor", options=lista_prov, disabled=disabled_all)
                 mec_asignado = ""
                 
@@ -737,7 +824,6 @@ elif menu_opcion == "Servicios":
         with st.container(height=800, border=False):
             st.write("### Ordenes de Trabajo (Abiertas)")
             
-            # Sincronización robusta: Tabla
             sel_ot_df = st.dataframe(df_ots_abiertas, use_container_width=True, hide_index=True, height=250, on_select="rerun", selection_mode="single-row")
             
             if sel_ot_df and len(sel_ot_df.selection.rows) > 0:
@@ -746,6 +832,8 @@ elif menu_opcion == "Servicios":
                     selected_id_orden = df_ots_abiertas.iloc[idx]["ID Orden"]
                     if st.session_state.get('ot_seleccionada_servicios') != selected_id_orden:
                         st.session_state.ot_seleccionada_servicios = selected_id_orden
+                        # Esto obliga a que el SelectBox cambie INMEDIATAMENTE
+                        st.session_state._cb_ot_serv = selected_id_orden
                         st.rerun()
             
             st.divider()
@@ -766,7 +854,6 @@ elif menu_opcion == "Servicios":
                     
                     columnas_carrito = ["ID Servicio", "Tipo Item", "Descripcion", "Cantidad", "Subtotal Costo"]
                     
-                    # Garantiza que solo se muestren columnas que sí existen en tu df final
                     cols_finales = [c for c in columnas_carrito if c in df_cart.columns]
                     st.dataframe(df_cart[cols_finales], use_container_width=True, hide_index=True, height=250)
                 else:
@@ -928,7 +1015,7 @@ elif menu_opcion == "Empleados":
     st.header("Base de Empleados")
     st.dataframe(leer_datos("7_Empleados"), use_container_width=True, hide_index=True)
 
-elif menu_opcion == "Kardex":
+elif menu_opcion == "Inventario":
     st.header("Inventario Kardex")
     st.dataframe(leer_datos("4_Kardex CI"), use_container_width=True, hide_index=True)
 
