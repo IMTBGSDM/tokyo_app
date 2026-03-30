@@ -48,7 +48,7 @@ st.markdown("""
     <style>
     /* 1. Reducir márgenes laterales, aprovechar ancho y eliminar margen inferior */
     .main .block-container { 
-        padding-top: 100.5rem !important; 
+        padding-top: 1.5rem !important; 
         padding-bottom: 0.5rem !important; 
         padding-left: 2.5rem !important; 
         padding-right: 2.5rem !important;
@@ -504,7 +504,7 @@ elif menu_opcion == "Clientes y Vehículos":
             c_row_header_2.text_input(":red[*] Código de Cliente", value=id_cli_display, disabled=True)
             
             c_row1_1, c_row1_2 = st.columns(2)
-            tel_cli = c_row1_1.text_input(":red[*] Teléfono (8+ dígitos)", value=def_tel)
+            tel_cli = c_row1_1.text_input(":red[*] Teléfono", value=def_tel)
             fecha_reg = c_row1_2.date_input(":red[*] Fecha de Registro", value=def_fecha, format="DD/MM/YYYY")
             email_cli = st.text_input("e-mail", value=str(st.session_state.get('cliente_vehiculo_data', {}).get('Correo', '')))
             dir_cli = st.text_input("Dirección", value=str(st.session_state.get('cliente_vehiculo_data', {}).get('Dirección', '')))
@@ -719,7 +719,7 @@ elif menu_opcion == "Servicios":
             fecha_creacion_serv = r1c1.date_input(":red[*] Fecha Creación", value=datetime.now(), format="DD/MM/YYYY", disabled=serv_lock)
             
             sel_ot_serv = st.session_state.get('ot_seleccionada_servicios', '')
-            r1c2.text_input(":red[*] Seleccionar Orden de Trabajo (Clic en tabla)", value=sel_ot_serv, disabled=True)
+            r1c2.text_input(":red[*] Seleccionar Orden de Trabajo", value=sel_ot_serv, disabled=True)
             
             disabled_all = not bool(sel_ot_serv) or serv_lock
             
