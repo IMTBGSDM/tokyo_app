@@ -84,7 +84,6 @@ def cargar_toda_la_base():
     for sheet in SHEETS_CONFIG.keys():
         try:
             worksheet = sh.worksheet(sheet)
-            # Usar get_all_values para evitar crasheos con columnas vacías (ej: Catálogos)
             data = worksheet.get_all_values()
             if not data:
                 df = pd.DataFrame(columns=SHEETS_CONFIG[sheet])
@@ -169,7 +168,6 @@ def eliminar_registro(sheet_name, id_col_name, id_valor):
         st.error(f"Error al deshacer registro: {e}")
         return False
 
-# Funciones Especializadas para Catálogos Separados
 def actualizar_catalogo(col_name, old_val, new_val, action="update"):
     try:
         ws = sh.worksheet("00_Catalogos")
@@ -206,7 +204,6 @@ def actualizar_catalogo(col_name, old_val, new_val, action="update"):
         range_end = rowcol_to_a1(max_rows, col_idx)
         ws.update(range_name=f"{range_start}:{range_end}", values=update_matrix)
 
-        # Forzar recarga segura del df
         data = ws.get_all_values()
         unique_headers = [h if h else f"Unnamed: {i}" for i, h in enumerate(data[0])]
         st.session_state.db["00_Catalogos"] = pd.DataFrame(data[1:], columns=unique_headers)
@@ -258,7 +255,6 @@ def limpiar_telefono(valor):
     if pd.isna(valor) or str(valor).lower() == 'nan': return ""
     return str(valor).replace('.0', '').strip()
 
-# Integración Dinámica con API NHTSA para Modelos
 @st.cache_data(ttl=86400)
 def obtener_modelos_api(marca):
     if not marca or len(marca) < 2: return []
@@ -280,8 +276,9 @@ if 'db_cargada' not in st.session_state:
         cargar_toda_la_base()
         st.session_state.db_cargada = True
 
-if 'menu_opcion' not in st.session_state:
-    st.session_state.menu_opcion = "Generar Orden de Trabajo"
+# SOLUCIÓN DE ERROR STREAMLIT: Variable de navegación desacoplada de la "key" del widget
+if 'active_tab' not in st.session_state:
+    st.session_state.active_tab = "Generar Orden de Trabajo"
 
 if 'master_form_data' not in st.session_state:
     st.session_state.master_form_data = {
@@ -305,8 +302,16 @@ with st.sidebar:
     st.title("🚗 TOKYO GARAGE")
     st.divider()
     
-    # Sincronización automática a través de st.session_state
-    menu_opcion = st.radio("Navegación", menu_items, key="menu_opcion")
+    # Manejo de estado seguro: Leemos el índice actual y actualizamos si el usuario hace clic
+    current_index = menu_items.index(st.session_state.active_tab) if st.session_state.active_tab in menu_items else 0
+    selected_tab = st.radio("Navegación", menu_items, index=current_index)
+    
+    # Si el usuario hace clic en el menú, actualizamos el estado y recargamos
+    if selected_tab != st.session_state.active_tab:
+        st.session_state.active_tab = selected_tab
+        st.rerun()
+        
+    menu_opcion = st.session_state.active_tab # Variable usada en todo el código
     
     st.divider()
     if st.button("↻ Sincronizar / Forzar Descarga"):
@@ -419,7 +424,6 @@ elif menu_opcion == "Catálogos":
             with st.container(height=500, border=True):
                 st.write(f"### {title}")
                 
-                # Filtrar solo la columna específica quitando vacíos
                 if col_name in df_catalogos.columns:
                     df_sub = df_catalogos[[col_name]].copy()
                     df_sub = df_sub[df_sub[col_name].astype(str).str.strip() != ""]
@@ -516,14 +520,12 @@ elif menu_opcion == "Clientes y Vehículos":
             
             v_row2_1, v_row2_2 = st.columns(2)
             
-            # Selector inteligente de Marca
             marca_sel = v_row2_1.selectbox(":red[*] Marca", MARCAS_COMUNES)
             if marca_sel == "Otra":
                 marca_val = v_row2_1.text_input("Ingresar Marca Manualmente").title()
             else:
                 marca_val = marca_sel
             
-            # Autocompletado dinámico de la API para Modelos
             modelos_api = obtener_modelos_api(marca_val) if marca_val else []
             
             if modelos_api:
@@ -663,7 +665,8 @@ elif menu_opcion == "Generar Orden de Trabajo":
                 with c_btn2:
                     if st.button("Continuar con Servicios", type="primary", use_container_width=True):
                         st.session_state.ot_seleccionada_servicios = st.session_state.id_ot_generada
-                        st.session_state.menu_opcion = "Servicios" # Actualiza el radio del menú auto
+                        # Modificamos active_tab para cambiar de sección sin errores
+                        st.session_state.active_tab = "Servicios"
                         st.session_state.ot_generada_exitosa = False 
                         st.rerun()
                 with c_btn3:
@@ -698,15 +701,9 @@ elif menu_opcion == "Servicios":
             r1c1, r1c2 = st.columns(2)
             fecha_creacion_serv = r1c1.date_input(":red[*] Fecha Creación", value=datetime.now(), format="DD/MM/YYYY", disabled=serv_lock)
             
-            lista_ots = [""] + df_ots_abiertas["ID Orden"].dropna().tolist()
-            
-            curr_ot_serv = st.session_state.get('ot_seleccionada_servicios', '')
-            idx_ot = lista_ots.index(curr_ot_serv) if curr_ot_serv in lista_ots else 0
-            
-            # El selectbox ahora confía en st.session_state._cb_ot_serv de manera dinámica para override
-            sel_ot_serv = r1c2.selectbox(":red[*] Seleccionar Orden de Trabajo", options=lista_ots, 
-                                       index=idx_ot, key="_cb_ot_serv", disabled=serv_lock)
-            st.session_state.ot_seleccionada_servicios = sel_ot_serv
+            # Campo de solo lectura, lee directamente del estado almacenado al hacer clic en la tabla
+            sel_ot_serv = st.session_state.get('ot_seleccionada_servicios', '')
+            r1c2.text_input(":red[*] Seleccionar Orden de Trabajo (Clic en tabla)", value=sel_ot_serv, disabled=True)
             
             disabled_all = not bool(sel_ot_serv) or serv_lock
             
@@ -740,7 +737,6 @@ elif menu_opcion == "Servicios":
                 mec_asignado = s_col_dyn.selectbox(":red[*] Mecanico Asignado", options=lista_mecanicos, disabled=disabled_all)
                 proveedor = ""
             else: 
-                # Cargar proveedores y limpiar vacíos de forma segura
                 prov_limpios = df_catalogos["Proveedores"][df_catalogos["Proveedores"].astype(str).str.strip() != ""] if "Proveedores" in df_catalogos.columns else pd.Series()
                 lista_prov = [""] + prov_limpios.dropna().unique().tolist()
                 proveedor = s_col_dyn.selectbox(":red[*] Proveedor", options=lista_prov, disabled=disabled_all)
@@ -810,7 +806,8 @@ elif menu_opcion == "Servicios":
                                 'Estado Admin': str(data['Estado Admin']) if not pd.isna(data['Estado Admin']) else "Abierto",
                                 'Tipo Ingreso': data['Tipo Ingreso'], 'Forma de Pago': data['Forma de Pago'],
                             }
-                        st.session_state.menu_opcion = "Cerrar Orden de Trabajo"
+                        # Modificamos active_tab para cambiar de sección sin errores
+                        st.session_state.active_tab = "Cerrar Orden de Trabajo"
                         st.session_state.servicio_agregado_exitoso = False
                         st.rerun()
                 with c_btn3:
@@ -830,10 +827,9 @@ elif menu_opcion == "Servicios":
                 idx = sel_ot_df.selection.rows[0]
                 if idx < len(df_ots_abiertas):
                     selected_id_orden = df_ots_abiertas.iloc[idx]["ID Orden"]
+                    # Almacenamos el valor aquí. El campo de texto (ahora bloqueado) lo lee instantáneamente
                     if st.session_state.get('ot_seleccionada_servicios') != selected_id_orden:
                         st.session_state.ot_seleccionada_servicios = selected_id_orden
-                        # Esto obliga a que el SelectBox cambie INMEDIATAMENTE
-                        st.session_state._cb_ot_serv = selected_id_orden
                         st.rerun()
             
             st.divider()
@@ -875,7 +871,7 @@ elif menu_opcion == "Cerrar Orden de Trabajo":
             
         btn_col1, btn_col2 = st.columns(2)
         if btn_col1.button("⬅ Regresar a Servicios", use_container_width=True):
-            st.session_state.menu_opcion = "Servicios"
+            st.session_state.active_tab = "Servicios" # Navegación sin error
             st.rerun()
             
         with st.container(height=750, border=False):
