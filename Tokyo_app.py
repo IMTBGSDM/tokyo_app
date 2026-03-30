@@ -48,7 +48,7 @@ st.markdown("""
     <style>
     /* 1. Reducir márgenes laterales, aprovechar ancho y eliminar margen inferior */
     .main .block-container { 
-        padding-top: 1.5rem !important; 
+        padding-top: 10.5rem !important; 
         padding-bottom: 0.5rem !important; 
         padding-left: 2.5rem !important; 
         padding-right: 2.5rem !important;
