@@ -17,7 +17,7 @@ SHEETS_CONFIG = {
     "1_Maestro": ["Código", "Categoría", "Descripción del Trabajo", "Tipo", "Costo Fijo"],
     "08_Clientes": ["ID Cliente", "Fecha", "Nombre Cliente", "Teléfono / WhatsApp", "Correo Electrónico", "Dirección", "Tipo (Frecuente/Nuevo)"],
     "09_Carros por Cliente": ["ID Vehículo", "Placa", "Marca", "Modelo", "Año", "Color", "ID Cliente", "Notas Técnicas (Detalles)", "Nombre Cliente", "Kilometraje"],
-    "00_Catalogos": ["Area", "", "Especialidades", "", "Proveedores"], # Soporte para columnas vacías
+    "00_Catalogos": ["Area", "", "Especialidades", "", "Proveedores"], 
     "2_Ordenes de Trabajo": [
         "ID Orden", "Fecha Creacion", "Fecha Cierre Tecnico", "Fecha Cierra Admin", 
         "ID Cliente", "Nombre Cliente", "Placa", "Kilometraje", "Estado Tecnico", 
@@ -43,10 +43,27 @@ MARCAS_COMUNES = [
     "Jeep", "Lexus", "Subaru", "Volvo", "Peugeot", "Otra"
 ]
 
-# --- ESTILOS CSS ---
+# --- ESTILOS CSS PERSONALIZADOS (Ajuste de proporciones y márgenes) ---
 st.markdown("""
     <style>
-    .main .block-container { padding-top: 1.5rem; }
+    /* 1. Reducir márgenes laterales, aprovechar ancho y eliminar margen inferior */
+    .main .block-container { 
+        padding-top: 1.5rem !important; 
+        padding-bottom: 0.5rem !important; 
+        padding-left: 2.5rem !important; 
+        padding-right: 2.5rem !important;
+        max-width: 98% !important;
+    }
+    
+    /* 2. Dar espacio a la barra de scroll en contenedores de formulario para que no tape campos */
+    div[data-testid="stScrollableContainer"] > div {
+        padding-right: 15px !important;
+    }
+    
+    /* 3. Ocultar el pie de página predeterminado de Streamlit que roba espacio abajo */
+    footer { display: none !important; }
+
+    /* Ajuste de espaciado en subtítulos */
     h3 { margin-bottom: 0.5rem !important; padding-bottom: 0rem !important; }
     </style>
     """, unsafe_allow_html=True)
@@ -276,7 +293,6 @@ if 'db_cargada' not in st.session_state:
         cargar_toda_la_base()
         st.session_state.db_cargada = True
 
-# SOLUCIÓN DE ERROR STREAMLIT: Variable de navegación desacoplada de la "key" del widget
 if 'active_tab' not in st.session_state:
     st.session_state.active_tab = "Generar Orden de Trabajo"
 
@@ -302,16 +318,14 @@ with st.sidebar:
     st.title("🚗 TOKYO GARAGE")
     st.divider()
     
-    # Manejo de estado seguro: Leemos el índice actual y actualizamos si el usuario hace clic
     current_index = menu_items.index(st.session_state.active_tab) if st.session_state.active_tab in menu_items else 0
     selected_tab = st.radio("Navegación", menu_items, index=current_index)
     
-    # Si el usuario hace clic en el menú, actualizamos el estado y recargamos
     if selected_tab != st.session_state.active_tab:
         st.session_state.active_tab = selected_tab
         st.rerun()
         
-    menu_opcion = st.session_state.active_tab # Variable usada en todo el código
+    menu_opcion = st.session_state.active_tab 
     
     st.divider()
     if st.button("↻ Sincronizar / Forzar Descarga"):
@@ -323,7 +337,8 @@ with st.sidebar:
 
 # --- SECCIÓN: MASTER ---
 if menu_opcion == "Master":
-    col_form, col_space, col_table = st.columns([2.2, 0.1, 3.2])
+    # Proporción homogeneizada [2, 0.05, 3]
+    col_form, col_space, col_table = st.columns([2, 0.05, 3])
     df_maestro = leer_datos("1_Maestro")
 
     with col_form:
@@ -456,7 +471,8 @@ elif menu_opcion == "Catálogos":
 
 # --- SECCIÓN: CLIENTES Y VEHÍCULOS ---
 elif menu_opcion == "Clientes y Vehículos":
-    col_form, col_space, col_table = st.columns([2, 0.1, 3.2])
+    # Proporción homogeneizada [2, 0.05, 3]
+    col_form, col_space, col_table = st.columns([2, 0.05, 3])
     df_clientes_base = leer_datos("08_Clientes")
     df_vehiculos_base = leer_datos("09_Carros por Cliente")
 
@@ -573,7 +589,8 @@ elif menu_opcion == "Clientes y Vehículos":
 
 # --- SECCIÓN: GENERAR ORDEN DE TRABAJO ---
 elif menu_opcion == "Generar Orden de Trabajo":
-    col_form, col_space, col_table = st.columns([2.2, 0.1, 3.2])
+    # Proporción homogeneizada [2, 0.05, 3]
+    col_form, col_space, col_table = st.columns([2, 0.05, 3])
     df_clientes = leer_datos("08_Clientes")
     df_vehiculos = leer_datos("09_Carros por Cliente")
     df_ots = leer_datos("2_Ordenes de Trabajo")
@@ -665,7 +682,6 @@ elif menu_opcion == "Generar Orden de Trabajo":
                 with c_btn2:
                     if st.button("Continuar con Servicios", type="primary", use_container_width=True):
                         st.session_state.ot_seleccionada_servicios = st.session_state.id_ot_generada
-                        # Modificamos active_tab para cambiar de sección sin errores
                         st.session_state.active_tab = "Servicios"
                         st.session_state.ot_generada_exitosa = False 
                         st.rerun()
@@ -683,7 +699,8 @@ elif menu_opcion == "Generar Orden de Trabajo":
 
 # --- SECCIÓN: SERVICIOS ---
 elif menu_opcion == "Servicios":
-    col_form, col_space, col_table = st.columns([2.2, 0.1, 3.2])
+    # Proporción homogeneizada [2, 0.05, 3]
+    col_form, col_space, col_table = st.columns([2, 0.05, 3])
     df_detalles = leer_datos("10_Detalles de Ordenes")
     df_empleados = leer_datos("7_Empleados")
     df_ots = leer_datos("2_Ordenes de Trabajo")
@@ -701,7 +718,6 @@ elif menu_opcion == "Servicios":
             r1c1, r1c2 = st.columns(2)
             fecha_creacion_serv = r1c1.date_input(":red[*] Fecha Creación", value=datetime.now(), format="DD/MM/YYYY", disabled=serv_lock)
             
-            # Campo de solo lectura, lee directamente del estado almacenado al hacer clic en la tabla
             sel_ot_serv = st.session_state.get('ot_seleccionada_servicios', '')
             r1c2.text_input(":red[*] Seleccionar Orden de Trabajo (Clic en tabla)", value=sel_ot_serv, disabled=True)
             
@@ -806,7 +822,6 @@ elif menu_opcion == "Servicios":
                                 'Estado Admin': str(data['Estado Admin']) if not pd.isna(data['Estado Admin']) else "Abierto",
                                 'Tipo Ingreso': data['Tipo Ingreso'], 'Forma de Pago': data['Forma de Pago'],
                             }
-                        # Modificamos active_tab para cambiar de sección sin errores
                         st.session_state.active_tab = "Cerrar Orden de Trabajo"
                         st.session_state.servicio_agregado_exitoso = False
                         st.rerun()
@@ -827,7 +842,6 @@ elif menu_opcion == "Servicios":
                 idx = sel_ot_df.selection.rows[0]
                 if idx < len(df_ots_abiertas):
                     selected_id_orden = df_ots_abiertas.iloc[idx]["ID Orden"]
-                    # Almacenamos el valor aquí. El campo de texto (ahora bloqueado) lo lee instantáneamente
                     if st.session_state.get('ot_seleccionada_servicios') != selected_id_orden:
                         st.session_state.ot_seleccionada_servicios = selected_id_orden
                         st.rerun()
@@ -859,7 +873,8 @@ elif menu_opcion == "Servicios":
 
 # --- SECCIÓN: CERRAR ORDEN DE TRABAJO ---
 elif menu_opcion == "Cerrar Orden de Trabajo":
-    col_form, col_space, col_table = st.columns([2.2, 0.1, 3.2])
+    # Proporción homogeneizada [2, 0.05, 3]
+    col_form, col_space, col_table = st.columns([2, 0.05, 3])
     df_ots = leer_datos("2_Ordenes de Trabajo")
     df_detalles = leer_datos("10_Detalles de Ordenes")
     
@@ -871,7 +886,7 @@ elif menu_opcion == "Cerrar Orden de Trabajo":
             
         btn_col1, btn_col2 = st.columns(2)
         if btn_col1.button("⬅ Regresar a Servicios", use_container_width=True):
-            st.session_state.active_tab = "Servicios" # Navegación sin error
+            st.session_state.active_tab = "Servicios"
             st.rerun()
             
         with st.container(height=750, border=False):
